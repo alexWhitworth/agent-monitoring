@@ -1,0 +1,1060 @@
+{
+  "spec_version": "1.0.0",
+  "generated_at": "2026-10-09T10:34:45-07:00",
+  "project": {
+    "name": "agent_monitor",
+    "description": "Python library implementing the Adaptive Multi-Dimensional Monitoring (AMDM) algorithm (Shukla 2025, arXiv:2509.00115) for agentic AI systems: Tier 1 streaming per-axis EWMA + joint Mahalanobis anomaly detection over aggregate metric matrices, and Tier 2 per-session Mahalanobis scoring with winsorized population estimates and stratified human-review queue allocation.",
+    "overview": "Hybrid FP/OOP design: all computation is pure functions over an immutable, Parquet-checkpointable MonitorState (frozen dataclasses, read-only NumPy arrays); side effects are confined to checkpoint.py (Parquet I/O) and a thin Monitor facade. Two deployment modes: long-lived streaming services (in-memory state + periodic checkpoints) and Airflow PythonOperator batches (restore -> advance -> score -> save). Data loading is out of scope; callers supply pre-aligned tick matrices and raw per-axis session features. No Rust in v0; pure NumPy/SciPy. Reference-implementation parity (references/AMDM.py) is the primary correctness oracle."
+  },
+  "tech_stack": {
+    "language": "python",
+    "python_version": "3.13",
+    "rust": {
+      "enabled": false,
+      "edition": null,
+      "pyo3_version": null,
+      "build_tool": null
+    },
+    "frameworks": [],
+    "testing": {
+      "unit": "pytest",
+      "coverage": "pytest-cov (fail_under = 85)",
+      "property_based": "hypothesis (critical math modules only)",
+      "mutation": "mutmut (restricted to joint.py, population.py, queue.py)",
+      "lint": "ruff (line-length 100, py313)",
+      "type_check": "mypy --strict",
+      "package_management": "uv"
+    },
+    "key_libraries": [
+      "numpy",
+      "scipy",
+      "pyarrow"
+    ],
+    "graphics": null
+  },
+  "build": {
+    "dev_install_cmd": "uv pip install -e .",
+    "requires_rust_toolchain": false
+  },
+  "data_schemas": [
+    {
+      "id": "DS-001",
+      "name": "MonitorConfig",
+      "description": "Frozen construction-time configuration; topology fixed at construction and stored in every state snapshot. Paper defaults: w=80, lambda=0.25, k=None (resolves to chi2_A(0.99)), alpha=0.01, min_warm=30, ridge=1e-6, agg='mean'.",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "axis_names", "required": true, "description": "tuple[str, ...], A >= 2 axis names"},
+        {"name": "metric_names", "required": true, "description": "tuple[tuple[str, ...], ...], >= 1 metric name per axis"},
+        {"name": "window", "required": true, "description": "int w >= 2, rolling window length; default 80"},
+        {"name": "lam", "required": true, "description": "float EWMA smoothing, 0 < lam <= 1; default 0.25"},
+        {"name": "k", "required": true, "description": "float | None per-axis sensitivity multiplier; None resolves to chi2.ppf(0.99, df=A)"},
+        {"name": "alpha", "required": true, "description": "float joint false-alarm rate; default 0.01"},
+        {"name": "min_warm", "required": true, "description": "int joint detector warm-up ticks, >= 2; default 30"},
+        {"name": "ridge", "required": true, "description": "float covariance regularization epsilon; default 1e-6"},
+        {"name": "agg", "required": true, "description": "str aggregation registry key: 'mean' | 'max' | 'l2'; default 'mean'"},
+        {"name": "population_window", "required": true, "description": "int >= 1, Tier 2 covariance window in ticks; default 80"},
+        {"name": "min_population", "required": true, "description": "int sessions required before Tier 2 scoring; default 30"},
+        {"name": "winsor_pct", "required": true, "description": "float | None per-axis clip percentile, two-sided [q_{1-p}, q_p]; None disables winsorization; default 0.99"},
+        {"name": "winsor_k", "required": true, "description": "int quantile lookback multiplier: retention = max(population_window, window * winsor_k) ticks; default 3"}
+      ]
+    },
+    {
+      "id": "DS-002",
+      "name": "QueueConfig",
+      "description": "Frozen review-queue budgets, per build call. Defaults (200/150/100/100/50) assume one build per day; per-tick users must scale.",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "top_k", "required": true, "description": "int >= 0, stratum 1: highest d2 sessions"},
+        {"name": "flagged", "required": true, "description": "int >= 0, stratum 2: sessions from AMDM-flagged ticks"},
+        {"name": "per_axis", "required": true, "description": "int >= 0, stratum 3: floor(per_axis / A) per axis, most extreme first"},
+        {"name": "uniform", "required": true, "description": "int >= 0, stratum 4: seeded uniform random from remainder"},
+        {"name": "reserved", "required": true, "description": "int >= 0, stratum 5: analyst reserve; library never fills it"},
+        {"name": "seed", "required": true, "description": "int RNG seed for reproducible random strata; default 0"}
+      ]
+    },
+    {
+      "id": "DS-003",
+      "name": "MonitorState",
+      "description": "Frozen checkpointable state value. All NumPy arrays are float64/int64, marked read-only.",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "config", "required": true, "description": "MonitorConfig, fixed topology"},
+        {"name": "tick", "required": true, "description": "int global tick counter, 0-based"},
+        {"name": "metric_buf", "required": true, "description": "np.ndarray (A, M_max, w) float64 read-only per-metric ring buffers"},
+        {"name": "metric_count", "required": true, "description": "np.ndarray (A, M_max) int64 read-only per-metric valid sample counts"},
+        {"name": "theta", "required": true, "description": "np.ndarray (A,) float64 EWMA baselines | None until first S_A"},
+        {"name": "axis_buf", "required": true, "description": "np.ndarray (A, w) float64 read-only S_A history ring"},
+        {"name": "axis_count", "required": true, "description": "np.ndarray (A,) int64 read-only S_A history counts"},
+        {"name": "n", "required": true, "description": "int Welford sample count for joint detector"},
+        {"name": "mu", "required": true, "description": "np.ndarray (A,) float64 Welford joint mean"},
+        {"name": "M2", "required": true, "description": "np.ndarray (A, A) float64 Welford scatter matrix"},
+        {"name": "population", "required": true, "description": "SessionWindow (DS-011): rows retained for max(population_window, window*winsor_k) ticks"}
+      ]
+    },
+    {
+      "id": "DS-004",
+      "name": "TickMetrics",
+      "description": "Per-tick input: one complete, caller-aligned metric matrix (Tier 1).",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "X", "required": true, "description": "per-axis float arrays, A entries total (ragged-safe M_a per axis); finite float64"}
+      ]
+    },
+    {
+      "id": "DS-005",
+      "name": "SessionFeatures",
+      "description": "Tier 2 candidate sessions for one tick; features are raw caller-supplied per-axis values, never pre-clipped.",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "ids", "required": true, "description": "(S,) string/int session ids, unique within the batch"},
+        {"name": "tick", "required": true, "description": "int tick the sessions belong to"},
+        {"name": "F", "required": true, "description": "np.ndarray (S, A) float64 raw per-axis feature values"}
+      ]
+    },
+    {
+      "id": "DS-006",
+      "name": "AxisResult",
+      "description": "Per-axis detection output for one tick (Steps 1-4).",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "axis", "required": true, "description": "str axis name"},
+        {"name": "S_A", "required": true, "description": "float | None axis score; None during z-score warm-up"},
+        {"name": "theta", "required": true, "description": "float | None EWMA baseline"},
+        {"name": "sigma_S", "required": true, "description": "float | None rolling std of S_A over full window"},
+        {"name": "deviation", "required": true, "description": "float | None |S_A - theta_A|"},
+        {"name": "threshold", "required": true, "description": "float | None k * sigma_S"},
+        {"name": "flagged", "required": true, "description": "bool; False whenever sigma_S <= 1e-10 or warm-up"},
+        {"name": "note", "required": true, "description": "str warm-up/status explanation"}
+      ]
+    },
+    {
+      "id": "DS-007",
+      "name": "JointResult",
+      "description": "Joint Mahalanobis/chi-square detection output (Steps 5-6).",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "n", "required": true, "description": "int Welford count"},
+        {"name": "D2", "required": true, "description": "float | None squared Mahalanobis distance; None during warm-up"},
+        {"name": "threshold", "required": true, "description": "float chi2.ppf(1-alpha, A)"},
+        {"name": "p_value", "required": true, "description": "float | None chi2.sf(D2, A)"},
+        {"name": "flagged", "required": true, "description": "bool = D2 > threshold"},
+        {"name": "note", "required": true, "description": "str warm-up/status explanation"}
+      ]
+    },
+    {
+      "id": "DS-008",
+      "name": "TickResult",
+      "description": "Complete Tier 1 output for one tick.",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "tick", "required": true, "description": "int tick index"},
+        {"name": "axis_results", "required": true, "description": "tuple[AxisResult, ...], length A"},
+        {"name": "joint", "required": true, "description": "JointResult"},
+        {"name": "S_vector", "required": true, "description": "np.ndarray (A,) | None axis scores; None entries filled 0.0 during axis warm-up for the joint detector (reference parity)"},
+        {"name": "any_axis_flag", "required": true, "description": "bool"},
+        {"name": "joint_flag", "required": true, "description": "bool"},
+        {"name": "alert", "required": true, "description": "bool any_axis_flag or joint_flag"}
+      ]
+    },
+    {
+      "id": "DS-009",
+      "name": "SessionScore",
+      "description": "Tier 2 score for one candidate session.",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "id", "required": true, "description": "str session id"},
+        {"name": "d2", "required": true, "description": "float | None squared Mahalanobis distance vs winsorized population; None during warm-up"},
+        {"name": "p_value", "required": true, "description": "float | None chi2.sf(d2, A); nominal (approximate under winsorization)"}
+      ]
+    },
+    {
+      "id": "DS-010",
+      "name": "ReviewQueuePlan",
+      "description": "Stratified human-review allocation for one build call.",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "tick", "required": true, "description": "int tick the plan was built for"},
+        {"name": "strata", "required": true, "description": "Mapping[str, tuple[str, ...]]: stratum name ('top_k','flagged','per_axis','uniform') -> disjoint session ids; 'reserved' key present and always empty"},
+        {"name": "unallocated", "required": true, "description": "tuple[str, ...] candidate ids not selected"}
+      ]
+    },
+    {
+      "id": "DS-011",
+      "name": "SessionWindow",
+      "description": "Immutable Tier 2 population store: session feature rows retained for retention = max(population_window, window * winsor_k) ticks. Covariance uses the last population_window ticks; winsor quantiles use the full retention.",
+      "immutable": true,
+      "layer": "python",
+      "fields": [
+        {"name": "ids", "required": true, "description": "np.ndarray (R,) read-only unique session ids"},
+        {"name": "ticks", "required": true, "description": "np.ndarray (R,) int64 read-only tick of each row"},
+        {"name": "features", "required": true, "description": "np.ndarray (R, A) float64 read-only raw feature values"},
+        {"name": "tick_flagged", "required": true, "description": "np.ndarray (R,) bool read-out: was the row's tick AMDM-flagged"},
+        {"name": "absorbed_at", "required": true, "description": "np.ndarray (R,) int64 read-only tick at which the row entered the window"}
+      ]
+    },
+    {
+      "id": "DS-012",
+      "name": "CheckpointParquetSchema",
+      "description": "On-disk checkpoint: a directory (atomic temp-dir + rename write) containing state.parquet (single row, nested pyarrow columns, format_version=1, config_json, tick, metric_buf, metric_count, theta, axis_buf, axis_count, joint_n, joint_mu, joint_M2) and population.parquet (tabular: session_id, tick, features, tick_flagged, absorbed_at). Loading is data-only (no pickle, no code execution); loaders reject unknown format_version.",
+      "immutable": false,
+      "layer": "python",
+      "fields": [
+        {"name": "format_version", "required": true, "description": "int64 schema version; currently 1"},
+        {"name": "state.parquet", "required": true, "description": "single-row nested Parquet table holding all Tier 1 + joint state and config_json"},
+        {"name": "population.parquet", "required": true, "description": "tabular Parquet, one row per retained session (session_id, tick, features list<double>, tick_flagged, absorbed_at)"}
+      ]
+    }
+  ],
+  "api_contracts": [
+    {
+      "id": "API-001",
+      "name": "config.validate_monitor_config",
+      "description": "Validates MonitorConfig invariants (A >= 2; M_a >= 1; 0 < lam <= 1; w >= 2; min_warm >= 2; population_window >= 1; winsor_k >= 1; 0 < winsor_pct < 1 when not None; known agg name; k > 0 when provided). Resolves k=None to chi2.ppf(0.99, df=A).",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "config", "type": "MonitorConfig"}
+      ],
+      "outputs": [
+        {"name": "config", "type": "MonitorConfig", "description": "validated, k resolved"}
+      ],
+      "raises": ["ValueError on any invariant violation"]
+    },
+    {
+      "id": "API-002",
+      "name": "config.json codec",
+      "description": "Canonical JSON encode/decode of MonitorConfig for the Parquet checkpoint config_json column.",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "config", "type": "MonitorConfig"}
+      ],
+      "outputs": [
+        {"name": "json_str", "type": "str", "description": "config_to_json; config_from_json inverts it"}
+      ],
+      "raises": ["ValueError on malformed JSON or unknown agg name"]
+    },
+    {
+      "id": "API-003",
+      "name": "agg.get_agg",
+      "description": "Aggregation registry: 'mean' | 'max' | 'l2' -> pure function over a non-empty list of z-scores. Empty input raises ValueError (callers handle warm-up None before calling).",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "name", "type": "str"}
+      ],
+      "outputs": [
+        {"name": "fn", "type": "Callable[[Sequence[float]], float]"}
+      ],
+      "raises": ["KeyError on unknown name"]
+    },
+    {
+      "id": "API-004",
+      "name": "normalizer.zscore",
+      "description": "Step 1: append x to one metric's ring buffer, return (z, new_buffer, new_count). z=None until >= 2 samples; z=0.0 when sigma < 1e-10 (constant metric).",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "buf", "type": "np.ndarray (w,) float64 read-only"},
+        {"name": "count", "type": "int"},
+        {"name": "x", "type": "float", "description": "finite raw metric reading"}
+      ],
+      "outputs": [
+        {"name": "z", "type": "float | None"},
+        {"name": "buf", "type": "np.ndarray (w,) float64 read-only"},
+        {"name": "count", "type": "int"}
+      ],
+      "raises": []
+    },
+    {
+      "id": "API-005",
+      "name": "axis.update_axis",
+      "description": "Steps 2-4 for one axis: z-score all metrics, S_A = agg(valid z-scores), EWMA theta_A cold-starts at first S_A, flag iff sigma_S > 1e-10 and |S_A - theta_A| > k * sigma_S (sigma_S over the full S_A window). Returns new state slice + AxisResult.",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "state", "type": "MonitorState"},
+        {"name": "a", "type": "int", "description": "axis index"},
+        {"name": "X_a", "type": "Sequence[float]", "description": "M_a raw metric readings this tick"},
+        {"name": "agg_fn", "type": "Callable[[Sequence[float]], float]"}
+      ],
+      "outputs": [
+        {"name": "state", "type": "MonitorState"},
+        {"name": "result", "type": "AxisResult"}
+      ],
+      "raises": ["ValueError if X_a length != M_a or non-finite values"]
+    },
+    {
+      "id": "API-006",
+      "name": "joint.welford_update",
+      "description": "Step 5a: rank-one Welford mean + scatter update; incorporates S(t) only (no lookahead).",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "n", "type": "int"},
+        {"name": "mu", "type": "np.ndarray (A,) float64"},
+        {"name": "M2", "type": "np.ndarray (A, A) float64"},
+        {"name": "S", "type": "np.ndarray (A,) float64"}
+      ],
+      "outputs": [
+        {"name": "n", "type": "int"},
+        {"name": "mu", "type": "np.ndarray (A,) float64"},
+        {"name": "M2", "type": "np.ndarray (A, A) float64"}
+      ],
+      "raises": []
+    },
+    {
+      "id": "API-007",
+      "name": "joint.d_squared",
+      "description": "Squared Mahalanobis distance (S-mu)^T Sigma_inv (S-mu) >= 0.",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "S", "type": "np.ndarray (A,) or (S, A) float64"},
+        {"name": "mu", "type": "np.ndarray (A,) float64"},
+        {"name": "sigma_inv", "type": "np.ndarray (A, A) float64"}
+      ],
+      "outputs": [
+        {"name": "d2", "type": "float | np.ndarray", "description": "scalar or (S,) batch"}
+      ],
+      "raises": ["numpy.linalg.LinAlgError if sigma_inv is not invertible (pre-validated upstream)"]
+    },
+    {
+      "id": "API-008",
+      "name": "joint.update_joint",
+      "description": "Steps 5-6: Welford update with S(t); Sigma = M2/(n-1) + ridge*I, full inversion (O(A^3), A small); warming-up result until n >= min_warm; then D2, p_value = chi2.sf(D2, A), flagged = D2 > chi2.ppf(1-alpha, A).",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "state", "type": "MonitorState"},
+        {"name": "S_vector", "type": "np.ndarray (A,) float64"}
+      ],
+      "outputs": [
+        {"name": "state", "type": "MonitorState"},
+        {"name": "result", "type": "JointResult"}
+      ],
+      "raises": ["numpy.linalg.LinAlgError if ridge-regularized Sigma is singular (informative message)"]
+    },
+    {
+      "id": "API-009",
+      "name": "advance",
+      "description": "Top-level pure orchestration: axis updates -> S_vector (0.0-fill during axis warm-up, reference parity) -> joint update -> TickResult. state(t+1) depends on ticks 0..t only.",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "state", "type": "MonitorState"},
+        {"name": "tick", "type": "TickMetrics"}
+      ],
+      "outputs": [
+        {"name": "state", "type": "MonitorState"},
+        {"name": "result", "type": "TickResult"}
+      ],
+      "raises": ["ValueError on shape mismatch or non-finite input"]
+    },
+    {
+      "id": "API-010",
+      "name": "population.absorb",
+      "description": "Append session rows (dedup on session_id, including ids already retained), evict rows with tick < state.tick - retention + 1 where retention = max(population_window, window * winsor_k). Records tick_flagged for the sessions' tick.",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "state", "type": "MonitorState"},
+        {"name": "sessions", "type": "SessionFeatures"},
+        {"name": "tick_flagged", "type": "bool", "description": "whether the sessions' tick raised alert"}
+      ],
+      "outputs": [
+        {"name": "state", "type": "MonitorState"}
+      ],
+      "raises": ["ValueError on duplicate ids within the batch or shape mismatch"]
+    },
+    {
+      "id": "API-011",
+      "name": "population.winsor_caps",
+      "description": "Per-axis two-sided clip bounds [q_{1-p}, q_p] (p = winsor_pct) computed over the FULL retention window. None while winsor_pct is None (disabled) or retained rows < 100 (warm-up).",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "state", "type": "MonitorState"}
+      ],
+      "outputs": [
+        {"name": "caps", "type": "np.ndarray (2, A) float64 | None", "description": "caps[0] = lower, caps[1] = upper; lower <= upper"}
+      ],
+      "raises": []
+    },
+    {
+      "id": "API-012",
+      "name": "population.population_stats",
+      "description": "(mu, Sigma_inv, n) over the last population_window ticks of winsorized rows (clipped to winsor_caps; raw rows while caps are None). None until n >= min_population. Lazy exact computation from the window; Sigma = cov(clipped rows) + ridge*I.",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "state", "type": "MonitorState"}
+      ],
+      "outputs": [
+        {"name": "stats", "type": "tuple[np.ndarray (A,), np.ndarray (A, A), int] | None"}
+      ],
+      "raises": ["numpy.linalg.LinAlgError if regularized covariance is singular"]
+    },
+    {
+      "id": "API-013",
+      "name": "population.score_sessions",
+      "description": "Batch d2 + chi-square p-values for candidate sessions vs population stats. Candidates are scored RAW (never clipped). None d2/p_value per session while population n < min_population.",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "state", "type": "MonitorState"},
+        {"name": "sessions", "type": "SessionFeatures"}
+      ],
+      "outputs": [
+        {"name": "scores", "type": "tuple[SessionScore, ...]"}
+      ],
+      "raises": ["ValueError on shape mismatch", "numpy.linalg.LinAlgError via population_stats"]
+    },
+    {
+      "id": "API-014",
+      "name": "queue.build_review_queue",
+      "description": "Five-stratum allocation from current-tick candidates in priority order (top_k > flagged > per_axis > uniform > reserved): disjoint membership, min(budget, available) per stratum, shortfall cascades to next stratum within the same build, seeded RNG for random strata, reserved never filled.",
+      "layer": "python",
+      "pure": true,
+      "inputs": [
+        {"name": "tick_result", "type": "TickResult"},
+        {"name": "session_scores", "type": "tuple[SessionScore, ...]"},
+        {"name": "state", "type": "MonitorState", "description": "for flagged-tick history and population stats"},
+        {"name": "qcfg", "type": "QueueConfig"}
+      ],
+      "outputs": [
+        {"name": "plan", "type": "ReviewQueuePlan"}
+      ],
+      "raises": []
+    },
+    {
+      "id": "API-015",
+      "name": "checkpoint.save_checkpoint",
+      "description": "I/O edge: serialize state to a Parquet checkpoint directory via temp dir + atomic rename.",
+      "layer": "python",
+      "pure": false,
+      "inputs": [
+        {"name": "state", "type": "MonitorState"},
+        {"name": "path", "type": "Path", "description": "checkpoint directory"}
+      ],
+      "outputs": [],
+      "raises": ["OSError on write failure"]
+    },
+    {
+      "id": "API-016",
+      "name": "checkpoint.load_checkpoint",
+      "description": "I/O edge: load + validate checkpoint (format_version == 1, config shape vs array shapes); returns MonitorState with all arrays read-only.",
+      "layer": "python",
+      "pure": false,
+      "inputs": [
+        {"name": "path", "type": "Path"}
+      ],
+      "outputs": [
+        {"name": "state", "type": "MonitorState"}
+      ],
+      "raises": ["ValueError on unknown format_version or shape mismatch", "FileNotFoundError", "OSError on corrupt read"]
+    },
+    {
+      "id": "API-017",
+      "name": "monitor.Monitor",
+      "description": "The only stateful class: holds current MonitorState, delegates to the pure core, rebinds on update. Methods: __init__(config), restore(path) classmethod, update(tick) -> TickResult, absorb(sessions), score(sessions) -> scores, review_queue(tick_result, sessions, qcfg) -> plan, save(path). update() records tick_flagged on sessions absorbed in the same tick.",
+      "layer": "python",
+      "pure": false,
+      "inputs": [
+        {"name": "config_or_path", "type": "MonitorConfig | Path"}
+      ],
+      "outputs": [
+        {"name": "monitor", "type": "Monitor", "description": "facade instance; no detection logic of its own"}
+      ],
+      "raises": ["delegates all core exceptions"]
+    }
+  ],
+  "features": [
+    {
+      "id": "F-001",
+      "name": "Types & config",
+      "description": "src/agent_monitor/types.py + config.py: all DS-001..DS-011 frozen dataclasses (zero logic), MonitorConfig/QueueConfig validation, k=None -> chi2_A(0.99) resolution, canonical JSON codec for checkpoints.",
+      "phase": "1a",
+      "priority": 1,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": [],
+      "linked_schemas": ["DS-001", "DS-002", "DS-003", "DS-004", "DS-005", "DS-006", "DS-007", "DS-008", "DS-009", "DS-010", "DS-011"],
+      "linked_apis": ["API-001", "API-002"],
+      "invariants": {
+        "composition_scope": "ATOMIC",
+        "temporal_bounds": "Configs are construction-time constants; no temporal dependence.",
+        "accounting_oracle": "Validation rules in plan section 3.1: A >= 2, M_a >= 1, 0 < lam <= 1, w >= 2, min_warm >= 2, population_window >= 1, strata >= 0, 0 < winsor_pct < 1 or None, known agg name.",
+        "plausibility_range": "resolved k = chi2.ppf(0.99, df=A); for A=5, k in [15.086, 15.087].",
+        "realism_requirements": null
+      },
+      "performance_requirements": {"complexity_budget": "O(1) per config validation"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["valid-config generation -> validation accepts and round-trips", "boundary violation -> ValueError for each rule"]},
+      "mutation_testing": {"enabled": false, "rationale_if_disabled": "Non-critical module (dataclasses + validation); covered by unit and property tests per user directive to restrict mutation testing."},
+      "acceptance_criteria": [
+        "uv run pytest tests/test_config.py passes: every validation rule has an accept-case and a reject-case",
+        "k=None resolves to scipy.stats.chi2.ppf(0.99, df=A) within 1e-9 (A=5 -> 15.0863)",
+        "config_to_json -> config_from_json round-trip yields dataclass-equal MonitorConfig",
+        "mypy --strict clean on types.py and config.py"
+      ],
+      "test_requirements": [
+        "tests/test_config.py (unit + hypothesis on validation and JSON codec)"
+      ],
+      "edge_cases": ["unknown agg name rejected at construction (plan R12)", "winsor_pct boundary: 0 and 1 rejected; None accepted", "k provided <= 0 rejected"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-002",
+      "name": "Aggregation registry",
+      "description": "src/agent_monitor/agg.py: registry mapping 'mean' | 'max' | 'l2' to pure functions over non-empty z-score sequences; empty input raises ValueError (axis warm-up is handled upstream).",
+      "phase": "1b",
+      "priority": 2,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-001"],
+      "linked_schemas": [],
+      "linked_apis": ["API-003"],
+      "invariants": {
+        "composition_scope": "ATOMIC",
+        "temporal_bounds": "Pointwise function of its input sequence; no temporal dependence.",
+        "accounting_oracle": "mean == statistics.fmean; max == builtin max; l2 == sqrt(sum(z^2)) computed independently in tests.",
+        "plausibility_range": "mean(z) in [min(z), max(z)] for all inputs; all outputs finite for finite inputs.",
+        "realism_requirements": null
+      },
+      "performance_requirements": {"complexity_budget": "O(M) per call"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["finite float sequences of length 1..50", "single-element lists", "mixed-sign values"]},
+      "mutation_testing": {"enabled": false, "rationale_if_disabled": "Trivial pure functions; oracle-exact property tests provide equivalent rigor without mutation overhead."},
+      "acceptance_criteria": [
+        "each of mean/max/l2 matches its independent oracle within 1e-12 on >= 100 hypothesis-generated sequences",
+        "registry lookup with unknown name raises KeyError",
+        "empty input raises ValueError for all three functions"
+      ],
+      "test_requirements": ["tests/test_agg.py (unit + hypothesis)"],
+      "edge_cases": ["single-element list", "mixed +inf/-inf excluded by upstream finite-input contract"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-003",
+      "name": "Rolling z-score normalizer",
+      "description": "src/agent_monitor/normalizer.py (Step 1): ring-buffer z-scores per metric with constant-metric guard and warm-up None semantics.",
+      "phase": "2a",
+      "priority": 3,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-001"],
+      "linked_schemas": ["DS-003", "DS-004"],
+      "linked_apis": ["API-004"],
+      "invariants": {
+        "composition_scope": "ATOMIC",
+        "temporal_bounds": "z_i(t) is a function of x_i(0..t) only (ring buffer contents); no future samples.",
+        "accounting_oracle": "z == (x - np.mean(buf_valid)) / np.std(buf_valid, ddof=1) recomputed from stored buffer, exact to 1e-12.",
+        "plausibility_range": "z finite; z == 0.0 iff sigma < 1e-10; over iid N(0,1) inputs, filled-window z has |mean| < 0.15 and std in [0.85, 1.15].",
+        "realism_requirements": null
+      },
+      "performance_requirements": {"complexity_budget": "O(w) per metric per tick (mean/std over the window)"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["iid N(0,1) streams", "constant streams", "monotone drift streams", "adversarial magnitude jumps"]},
+      "mutation_testing": {"enabled": false, "rationale_if_disabled": "Covered by exact-oracle property tests (plan section 5, 2a) and parity test F-006; outside the restricted critical set per user directive."},
+      "acceptance_criteria": [
+        "zscore returns (None, buf', count') while count < 2",
+        "zscore returns 0.0 when window sigma < 1e-10 (constant metric)",
+        "hypothesis: z matches the buffer-recomputed oracle within 1e-12 on >= 1000 generated streams",
+        "after w + 5 updates the buffer contains exactly the last w samples (eviction exact)"
+      ],
+      "test_requirements": ["tests/test_normalizer.py (unit + hypothesis)"],
+      "edge_cases": ["constant metric (plan R3)", "exactly 2 samples", "window wrap-around boundary"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-004",
+      "name": "Per-axis monitor",
+      "description": "src/agent_monitor/axis.py (Steps 2-4): S_A aggregation, EWMA theta_A with cold start at first S_A, sigma_S over full S_A window, flag iff sigma_S > 1e-10 and |S_A - theta_A| > k * sigma_S.",
+      "phase": "2b",
+      "priority": 4,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-001", "F-002", "F-003"],
+      "linked_schemas": ["DS-003", "DS-006", "DS-008"],
+      "linked_apis": ["API-005"],
+      "invariants": {
+        "composition_scope": "ATOMIC",
+        "temporal_bounds": "theta_A(t) = f(S_A(t), theta_A(t-1)) only; [T2] no future S_A incorporation.",
+        "accounting_oracle": "S_A == agg_fn(z-scores) recomputed independently; theta recurrence theta(t) = lam*S_A + (1-lam)*theta(t-1) verified stepwise to 1e-12.",
+        "plausibility_range": "flagged == False whenever sigma_S <= 1e-10; flagged == (deviation > k * sigma_S) otherwise, exact predicate.",
+        "realism_requirements": null
+      },
+      "performance_requirements": {"complexity_budget": "O(M_a + w) per axis per tick"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["random finite metric vectors", "cold-start sequences", "constant-metric axes"]},
+      "mutation_testing": {"enabled": false, "rationale_if_disabled": "Covered by stepwise oracle tests and reference parity (F-006); outside the restricted critical set per user directive."},
+      "acceptance_criteria": [
+        "S_A equals agg applied to the normalizer's valid z-scores within 1e-12",
+        "theta cold-starts at first S_A and thereafter follows the EWMA recurrence within 1e-12",
+        "flagged is False whenever sigma_S <= 1e-10 (plan R3 guard)",
+        "flagged equals the exact predicate |S_A - theta_A| > k * sigma_S on >= 1000 hypothesis cases"
+      ],
+      "test_requirements": ["tests/test_axis.py (unit + hypothesis)"],
+      "edge_cases": ["axis warm-up (all metrics count < 2)", "sigma_S exactly at 1e-10 boundary", "post-regime-shift theta absorption (plan R4)"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-005",
+      "name": "Joint anomaly detector",
+      "description": "src/agent_monitor/joint.py (Steps 5-6) [CRITICAL]: Welford rank-one mean/scatter, ridge-regularized Sigma inversion, D2, chi-square p-value and threshold, min_warm gate. mutmut target.",
+      "phase": "2c",
+      "priority": 5,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-001"],
+      "linked_schemas": ["DS-003", "DS-007", "DS-008"],
+      "linked_apis": ["API-006", "API-007", "API-008"],
+      "invariants": {
+        "composition_scope": "ATOMIC",
+        "temporal_bounds": "[T2] Welford (n, mu, M2) at tick t incorporates S(t) and prior state only; never S(t+1).",
+        "accounting_oracle": "[O1] Welford mean == np.mean and scatter == np.cov(ddof=1) on identical input sequences, to 1e-9.",
+        "plausibility_range": "D2 >= 0 always; p_value in [0, 1]; threshold == chi2.ppf(1-alpha, A) exactly; flagged == (D2 > threshold).",
+        "realism_requirements": null
+      },
+      "performance_requirements": {"complexity_budget": "O(A^3) per tick (full inversion, A <= ~10); Welford update O(A^2)"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["random (S, A) score sequences for Welford-vs-np.cov oracle", "near-singular correlated axes", "adversarial magnitudes"]},
+      "mutation_testing": {"enabled": true, "tool": "mutmut", "targets": ["src/agent_monitor/joint.py"]},
+      "acceptance_criteria": [
+        "[O1] Welford mean and scatter match np.mean/np.cov(ddof=1) within 1e-9 on >= 100 hypothesis-generated sequences",
+        "D2 >= 0 and p_value in [0, 1] on all generated inputs (no NaN/Inf)",
+        "warming-up result (D2=None, flagged=False) returned for n < min_warm",
+        "flagged equals (D2 > chi2.ppf(1-alpha, A)) exactly on all generated inputs",
+        "mutmut on joint.py: all surviving mutants killed or explicitly justified in MUTATION_NOTES.md"
+      ],
+      "test_requirements": [
+        "tests/test_joint.py (unit + hypothesis oracle tests)",
+        "mutmut run restricted to src/agent_monitor/joint.py (F-013 enforces)"
+      ],
+      "edge_cases": ["singular/degenerate scatter (plan R1: ridge + informative LinAlgError)", "n == 1 (M2 undefined until 2)", "perfectly correlated axes"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-006",
+      "name": "advance orchestration + reference parity",
+      "description": "Top-level pure advance(state, tick) -> (state', TickResult) wiring Steps 1-6 (0.0-fill S entries during axis warm-up, reference parity), plus [O3] parity suite against references/AMDM.py on the three seeded scenarios.",
+      "phase": "2d",
+      "priority": 6,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-003", "F-004", "F-005"],
+      "linked_schemas": ["DS-004", "DS-008"],
+      "linked_apis": ["API-009"],
+      "invariants": {
+        "composition_scope": "INTEGRATION",
+        "temporal_bounds": "[T1] result(t) and state(t) are functions of ticks 0..t only; streaming advance == batch recompute over the full prefix to 1e-12.",
+        "accounting_oracle": "[O3] references/AMDM.py on identical seeded inputs: S_A, theta, D2 and all flags match to 1e-9; detection matrix reproduced: normal -> silent; coordinated +1.5sigma shift -> joint-flag only; single-axis x20sigma spike -> axis + joint flags.",
+        "plausibility_range": "alert == any_axis_flag or joint_flag; S_vector length A; 0.0-fill only during axis warm-up.",
+        "realism_requirements": "[R1] Three seeded scenario streams spanning warm-up -> steady state -> coordinated shift -> extreme spike, at realistic tick counts (>= 60 baseline ticks), not single-shot mocks."
+      },
+      "performance_requirements": {"complexity_budget": "O(A * M_max * w) per tick, dominated by normalizer; A*M*w ~ 4e3 default"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["random finite tick matrices, no-lookahead prefix-equivalence property (T1)"]},
+      "mutation_testing": {"enabled": false, "rationale_if_disabled": "Orchestration only (no math of its own); guarded by parity oracle [O3] and no-lookahead property tests."},
+      "acceptance_criteria": [
+        "[O3] S_A, theta, D2 match references/AMDM.py within 1e-9 on all three seeded scenarios, including 0.0-fill warm-up behavior",
+        "[O3] detection matrix exact: normal silent; +1.5sigma coordinated shift -> joint_flag and not any_axis_flag; safety x20sigma spike -> any_axis_flag and joint_flag",
+        "[T1] streaming advance over >= 1000 generated ticks equals batch recompute over the prefix within 1e-12",
+        "TickResult.alert == (any_axis_flag or joint_flag) exactly"
+      ],
+      "test_requirements": [
+        "tests/test_advance.py (unit + hypothesis no-lookahead)",
+        "tests/test_parity_integration.py (multi-module integration test: full pipeline vs references/AMDM.py; required to satisfy the INTEGRATION-scope [O3] invariant)"
+      ],
+      "edge_cases": ["0.0-fill during axis warm-up biases early joint mu/Sigma (plan R2, accepted reference-parity choice)", "first tick after restore", "shape mismatch raises ValueError"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-007",
+      "name": "Population window, winsorization & stats",
+      "description": "src/agent_monitor/population.py (Tier 2 core) [CRITICAL]: absorb/dedup/evict with retention = max(population_window, window*winsor_k); two-sided winsor caps over full retention; exact winsorized empirical (mu, Sigma_inv) over last population_window ticks with ridge + singularity guard. mutmut target.",
+      "phase": "3a",
+      "priority": 7,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-001"],
+      "linked_schemas": ["DS-003", "DS-005", "DS-011"],
+      "linked_apis": ["API-010", "API-011", "API-012"],
+      "invariants": {
+        "composition_scope": "ATOMIC",
+        "temporal_bounds": "absorb at tick t only appends rows with tick <= t and evicts by cutoff t - retention + 1; stats use retained rows only.",
+        "accounting_oracle": "[A2] rows_retained <= capacity and no row with tick < state.tick - retention + 1 survives absorb. [O2] population_stats == clip-then-cov oracle: np.mean/np.cov over window rows clipped to winsor_caps (raw rows while caps None), to 1e-9.",
+        "plausibility_range": "caps: lower <= upper per axis, both finite; caps None iff winsor_pct is None or retained rows < 100; stats None until n >= min_population.",
+        "realism_requirements": null
+      },
+      "performance_requirements": {"complexity_budget": "absorb O(R + S); caps O(R*A); stats O(R_cov * A^2) per scoring call (lazy recompute, no incremental scatter state)"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["random session batches with duplicate ids and old ticks (eviction)", "contaminated windows (spike rows) to verify cap stability", "near-degenerate feature distributions"]},
+      "mutation_testing": {"enabled": true, "tool": "mutmut", "targets": ["src/agent_monitor/population.py"]},
+      "acceptance_criteria": [
+        "absorb dedups on session_id (within batch and vs retained rows); duplicate ids raise ValueError or are skipped per documented contract",
+        "[A2] after absorb at tick t, zero rows have tick < t - retention + 1 and rows_retained <= capacity (property test)",
+        "[O2] population_stats matches explicit clip -> np.mean/np.cov oracle within 1e-9 (both with and without caps)",
+        "winsor_caps: None while winsor_pct is None or retained rows < 100; otherwise equals np.quantile(rows, [1-p, p], axis=0) within 1e-12, with lower <= upper",
+        "mutmut on population.py: all surviving mutants killed or explicitly justified in MUTATION_NOTES.md"
+      ],
+      "test_requirements": [
+        "tests/test_population.py (unit + hypothesis: eviction, dedup, clip-then-cov oracle)",
+        "mutmut run restricted to src/agent_monitor/population.py (F-013 enforces)"
+      ],
+      "edge_cases": ["population contamination by anomalies (plan R5 -> winsorization)", "coordinated drift not mitigable (Assumption 10, documented)", "duplicate session ids across ticks (plan R6)", "singular covariance (plan R1)"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-008",
+      "name": "Session scoring",
+      "description": "Batch d2 + p-values for candidate sessions vs winsorized population (Tier 2). Candidates scored RAW (never clipped). Vectorized via (F - mu) @ Sigma_inv.",
+      "phase": "3b",
+      "priority": 8,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-005", "F-007"],
+      "linked_schemas": ["DS-005", "DS-009"],
+      "linked_apis": ["API-007", "API-012", "API-013"],
+      "invariants": {
+        "composition_scope": "ATOMIC",
+        "temporal_bounds": "Scoring at tick t uses population rows with tick <= t only.",
+        "accounting_oracle": "batch d2 identical to per-session d_squared loop within 1e-12.",
+        "plausibility_range": "d2 >= 0; p_value in [0,1]; None while population n < min_population (no silent zeros, plan R11). [P4] a candidate beyond a cap scores strictly greater d2 than one at the cap.",
+        "realism_requirements": null
+      },
+      "performance_requirements": {"complexity_budget": "O(S * A^2) per batch, vectorized (plan R9: 1e7 sessions feasible); no per-session Python loops"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["batch-vs-loop equivalence", "raw-vs-clipped candidate ordering [P4]", "warm-up gating"]},
+      "mutation_testing": {"enabled": true, "tool": "mutmut", "targets": ["src/agent_monitor/population.py"]},
+      "acceptance_criteria": [
+        "batch d2 matches per-session d_squared loop within 1e-12 on >= 100 generated batches",
+        "scores have d2=None, p_value=None while population n < min_population",
+        "[P4] candidate feature beyond cap yields strictly greater d2 than identical candidate with feature at the cap",
+        "all emitted d2/p_value finite (no NaN/Inf) on adversarial finite inputs"
+      ],
+      "test_requirements": ["tests/test_scoring.py (unit + hypothesis, incl. [P4] ordering property)"],
+      "edge_cases": ["min_population never reached in low-volume deployments (plan R11)", "singular covariance raises informative LinAlgError (plan R1)", "candidate batch larger than population"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-009",
+      "name": "Review queue stratification",
+      "description": "src/agent_monitor/queue.py [CRITICAL]: five strata (top_k, flagged, per_axis, uniform, reserved) in priority order; disjoint membership; min(budget, available) with shortfall cascade within the same build call; seeded RNG; reserved never filled. mutmut target.",
+      "phase": "3c",
+      "priority": 9,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-008"],
+      "linked_schemas": ["DS-002", "DS-010"],
+      "linked_apis": ["API-014"],
+      "invariants": {
+        "composition_scope": "ATOMIC",
+        "temporal_bounds": "Plan built from current-tick candidates and population rows with tick <= t only.",
+        "accounting_oracle": "[A1] strata pairwise disjoint; |stratum| == min(budget, available_after_higher_priority_strata); no session appears twice; reserved always empty. Oracle: QueueConfig budgets vs realized plan sizes. [D1] same (state, seed, inputs) -> identical plan.",
+        "plausibility_range": "selected + unallocated == candidate set exactly (set equality); total selected <= sum(top_k, flagged, per_axis, uniform).",
+        "realism_requirements": null
+      },
+      "performance_requirements": {"complexity_budget": "O(S log S) per build call (sort for top-k; per-axis maxima vectorized)"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["random candidate pools with budget starvation", "duplicate/overlapping eligibility (session both top-k and flagged)", "empty candidate pool"]},
+      "mutation_testing": {"enabled": true, "tool": "mutmut", "targets": ["src/agent_monitor/queue.py"]},
+      "acceptance_criteria": [
+        "[A1] strata pairwise disjoint and |stratum| == min(budget, available after higher-priority strata) on >= 1000 hypothesis cases",
+        "[A1] 'reserved' key present and always empty; library never fills it",
+        "[D1] identical (state, seed, inputs) produce identical plans (dataclass equality); different seed changes the uniform stratum given enough candidates",
+        "shortfall cascade: unmet top_k budget flows to flagged stratum within the same build call (explicit test)",
+        "selected + unallocated == candidate set exactly (accounting test)",
+        "mutmut on queue.py: all surviving mutants killed or explicitly justified in MUTATION_NOTES.md"
+      ],
+      "test_requirements": [
+        "tests/test_queue.py (unit + hypothesis: accounting, determinism, cascade)",
+        "mutmut run restricted to src/agent_monitor/queue.py (F-013 enforces)"
+      ],
+      "edge_cases": ["candidate pool smaller than total budget", "per_axis budget not divisible by A (floor per axis)", "all candidates from flagged ticks", "empty candidate pool"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-010",
+      "name": "Parquet checkpoint persistence",
+      "description": "src/agent_monitor/checkpoint.py (the only I/O module): save state to a Parquet checkpoint directory (state.parquet nested single-row + population.parquet tabular, DS-012) via temp-dir + atomic rename; load with format_version and shape validation; arrays re-marked read-only.",
+      "phase": "4a",
+      "priority": 10,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-001", "F-004", "F-005", "F-007"],
+      "linked_schemas": ["DS-003", "DS-011", "DS-012"],
+      "linked_apis": ["API-015", "API-016"],
+      "invariants": {
+        "composition_scope": "INTEGRATION",
+        "temporal_bounds": "Persistence of state(t) only; no implicit advancement on load.",
+        "accounting_oracle": "[D2] load(save(state)) yields arrays byte-equal (np.array_equal, writeable flags False) and the next advance produces identical results within 1e-12.",
+        "plausibility_range": "checkpoint contains format_version == 1; loading is data-only (no pickle, no code execution).",
+        "realism_requirements": "Round-trip tested on a state that has passed warm-up and carries a non-empty population window (not an empty-state mock)."
+      },
+      "performance_requirements": {"complexity_budget": "O(R) serialization cost, R retained session rows (default retention 240 ticks)"},
+      "property_based_testing": {"enabled": false, "rationale_if_disabled": "I/O boundary; round-trip identity is a deterministic integration property covered by explicit integration tests."},
+      "mutation_testing": {"enabled": false, "rationale_if_disabled": "Pure I/O boundary per user directive; correctness enforced by [D2] round-trip integration tests and version-gate tests."},
+      "acceptance_criteria": [
+        "[D2] save -> load round-trip: all arrays byte-equal (np.array_equal), writeable == False, config dataclass-equal",
+        "[D2] the next advance after a round-trip is identical to the non-persisted path within 1e-12 (integration test)",
+        "load rejects format_version != 1 with an explicit ValueError (plan R7)",
+        "save writes atomically: temp-dir + rename; an injected mid-write failure leaves any pre-existing checkpoint intact (plan R8)"
+      ],
+      "test_requirements": [
+        "tests/test_checkpoint.py (unit)",
+        "tests/test_checkpoint_integration.py (multi-module round-trip [D2]; required to satisfy the INTEGRATION-scope invariant)"
+      ],
+      "edge_cases": ["partial/crashed checkpoint write (plan R8)", "schema evolution / unknown format_version (plan R7)", "empty population window (fresh state)", "large population window (~100k rows) serialization"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-011",
+      "name": "Monitor facade",
+      "description": "src/agent_monitor/monitor.py: the only stateful class. Delegates to the pure core, rebinds state, records tick_flagged on sessions absorbed in the same tick, restore/save passthrough. No detection logic of its own.",
+      "phase": "4b",
+      "priority": 11,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-006", "F-007", "F-008", "F-009", "F-010"],
+      "linked_schemas": ["DS-003"],
+      "linked_apis": ["API-009", "API-010", "API-013", "API-014", "API-015", "API-016", "API-017"],
+      "invariants": {
+        "composition_scope": "INTEGRATION",
+        "temporal_bounds": "Facade state at time t equals pure state after ticks 0..t; update() never peeks ahead.",
+        "accounting_oracle": "Monitor.update(tick) result is identical to advance(state, tick) on the equivalent pure state within 1e-12; Monitor.restore(path).state equals load_checkpoint(path).",
+        "plausibility_range": "update() records tick_flagged = tick_result.alert on sessions absorbed for that tick.",
+        "realism_requirements": "Airflow-style usage path (restore -> advance -> absorb -> score -> save) exercised end-to-end in the integration test."
+      },
+      "performance_requirements": {"complexity_budget": "delegation only; same as advance/score/queue"},
+      "property_based_testing": {"enabled": false, "rationale_if_disabled": "Thin delegation wrapper; equivalence to the pure core is deterministically tested, not statistically."},
+      "mutation_testing": {"enabled": false, "rationale_if_disabled": "No logic of its own (delegation only); outside restricted critical set per user directive."},
+      "acceptance_criteria": [
+        "Monitor.update(tick) results identical to advance() pure calls across >= 100 ticks within 1e-12",
+        "Monitor.restore(path) state equals load_checkpoint(path); Monitor.save(path) yields a loadable checkpoint (integration test)",
+        "sessions absorbed in the same tick as update() carry tick_flagged == tick_result.alert",
+        "README documents the Airflow-style restore -> advance -> absorb -> score -> save workflow"
+      ],
+      "test_requirements": [
+        "tests/test_monitor.py (unit delegation tests)",
+        "tests/test_monitor_integration.py (multi-module Airflow-style workflow; required to satisfy the INTEGRATION-scope invariant)"
+      ],
+      "edge_cases": ["restore from checkpoint with different config than expected", "absorb before first update", "save without prior updates"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-012",
+      "name": "Property-based soak tests",
+      "description": "Cross-module hypothesis/Monte-Carlo hardening: no-lookahead equivalence, Tier 1 and Tier 2 long-run H0 behavior, NaN/Inf-free outputs under adversarial inputs, full-lifecycle realism streams.",
+      "phase": "5a",
+      "priority": 12,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-006", "F-009"],
+      "linked_schemas": ["DS-008", "DS-009"],
+      "linked_apis": ["API-009", "API-013", "API-014"],
+      "invariants": {
+        "composition_scope": "INTEGRATION",
+        "temporal_bounds": "[T1] streaming == batch replay over prefixes of >= 10^3 generated ticks within 1e-12.",
+        "accounting_oracle": "[P1] Tier 1: mean D2 within 5% of A and flag rate within [0.5*alpha, 2*alpha] over >= 10^4 iid ticks after warm-up. [P3] Tier 2: mean d2 within 10% of A and flag rate within [alpha, 2*alpha] over >= 10^4 Monte-Carlo sessions (band reflects winsorization variance shrinkage).",
+        "plausibility_range": "[P2] no NaN/Inf in any result field under any valid adversarial input (constant metrics, zero-variance axes, extreme magnitudes).",
+        "realism_requirements": "[R1] Full lifecycle synthetic streams: warm-up -> steady state -> drift -> spike -> recovery at realistic tick cadence (>= 60 baseline ticks, >= 100 total), not single-shot mocks."
+      },
+      "performance_requirements": {"complexity_budget": "Test-only; 10^4 ticks x O(A*M*w) ~ seconds wall time"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["full-lifecycle scenario generator", "adversarial-but-valid tick matrices", "H0 session sampling"]},
+      "mutation_testing": {"enabled": false, "rationale_if_disabled": "Test-only feature; no production code to mutate."},
+      "acceptance_criteria": [
+        "[T1] streaming == batch replay within 1e-12 over >= 100 generated tick prefixes",
+        "[P1] over >= 10^4 iid ticks: mean D2 within 5% of A; Tier 1 flag rate in [0.5*alpha, 2*alpha] after warm-up",
+        "[P3] over >= 10^4 H0 sessions: mean d2 within 10% of A; Tier 2 flag rate in [alpha, 2*alpha]",
+        "[P2] zero NaN/Inf across all result fields in >= 10^4 adversarial valid inputs",
+        "[R1] full-lifecycle stream test passes detection expectations at each phase (silent steady state, flags on drift/spike, recovery silent)"
+      ],
+      "test_requirements": [
+        "tests/test_soak_properties.py (multi-module integration test; required to satisfy the INTEGRATION-scope [T1]/[P1]/[P3]/[P2]/[R1] invariants)"
+      ],
+      "edge_cases": ["degenerate all-constant streams", "regime change mid-stream", "population window crossing winsor lookback boundary"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-013",
+      "name": "Restricted mutation testing",
+      "description": "Run mutmut on the critical modules only (joint.py, population.py, queue.py); all surviving mutants killed or explicitly justified in MUTATION_NOTES.md. Mutation testing explicitly NOT run on other modules per user directive.",
+      "phase": "5b",
+      "priority": 13,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-012"],
+      "linked_schemas": [],
+      "linked_apis": ["API-006", "API-007", "API-008", "API-010", "API-011", "API-012", "API-013", "API-014"],
+      "invariants": {
+        "composition_scope": "ATOMIC",
+        "temporal_bounds": "Mutation runs at module level against atomic test suites; no temporal interaction.",
+        "accounting_oracle": "mutmut result report: survival count == 0 for joint.py, population.py, queue.py, or every survivor documented in MUTATION_NOTES.md with justification.",
+        "plausibility_range": "Mutation scope excludes types.py, config.py, agg.py, normalizer.py, axis.py, checkpoint.py, monitor.py (documented rationale per module).",
+        "realism_requirements": null
+      },
+      "performance_requirements": {"complexity_budget": "mutmut runtime bounded by the three target modules' test suites"},
+      "property_based_testing": {"enabled": false, "rationale_if_disabled": "Meta-testing feature; PBT is exercised in F-012."},
+      "mutation_testing": {"enabled": true, "tool": "mutmut", "targets": ["src/agent_monitor/joint.py", "src/agent_monitor/population.py", "src/agent_monitor/queue.py"]},
+      "acceptance_criteria": [
+        "mutmut on joint.py, population.py, queue.py: zero surviving mutants, or every survivor justified in MUTATION_NOTES.md",
+        "mutation exclusion list (all other modules) documented with rationale in the repo"
+      ],
+      "test_requirements": ["mutmut run gated in CI or dev workflow for the three target modules"],
+      "edge_cases": ["equivalent mutants (semantically identical) -> justified, not 'killed' falsely"],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-014",
+      "name": "Release hygiene",
+      "description": "README (streaming + Airflow usage, paper-default parameter table, deferred-scope notes), coverage gate >= 85%, ruff/mypy clean, uv lockfile, .gitignore for transient artifacts.",
+      "phase": "5c",
+      "priority": 14,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-011", "F-012", "F-013"],
+      "linked_schemas": [],
+      "linked_apis": [],
+      "invariants": {
+        "composition_scope": "INTEGRATION",
+        "temporal_bounds": "N/A (release hygiene).",
+        "accounting_oracle": "pytest-cov fail_under = 85 enforced; ruff and mypy exit code 0.",
+        "plausibility_range": "README documents all 10 plan assumptions and the deferred-scope items (calibration v1, plotnine v2, partial axes v1+).",
+        "realism_requirements": null
+      },
+      "performance_requirements": {"complexity_budget": "N/A"},
+      "property_based_testing": {"enabled": false, "rationale_if_disabled": "Documentation/CI hygiene; no computational logic."},
+      "mutation_testing": {"enabled": false, "rationale_if_disabled": "No production code in scope."},
+      "acceptance_criteria": [
+        "uv run pytest exits 0 with total coverage >= 85% (fail_under gate active)",
+        "uv run ruff check . and uv run mypy src/ both exit 0",
+        "README contains runnable streaming and Airflow examples plus the paper-default parameter table and deferred-scope notes",
+        "uv.lock committed; .coverage, coverage.xml, htmlcov/, .pytest_cache/ in .gitignore"
+      ],
+      "test_requirements": ["CI/dev commands: uv run pytest, uv run ruff check ., uv run mypy src/"],
+      "edge_cases": ["coverage gate vs. I/O-bound checkpoint module (use # pragma: no cover on untestable env branches only)"],
+      "clarification_needed": false
+    }
+  ],
+  "risks": [
+    {
+      "id": "R-01",
+      "description": "Singular or near-singular covariance (perfectly correlated axes, degenerate population) breaks Mahalanobis inversion in both Tier 1 joint detector and Tier 2 population stats.",
+      "severity": "high",
+      "mitigation": "ridge * I regularization on both Sigma matrices; explicit informative LinAlgError; [P2] NaN/Inf-free property tests include near-singular inputs.",
+      "linked_features": ["F-005", "F-007", "F-008"]
+    },
+    {
+      "id": "R-02",
+      "description": "0.0-fill of S entries during per-axis warm-up biases early joint mu/Sigma estimates.",
+      "severity": "low",
+      "mitigation": "Accepted reference-parity choice (user-approved); axis warm-up is a few ticks vs min_warm=30; revisit in v1.",
+      "linked_features": ["F-006"]
+    },
+    {
+      "id": "R-03",
+      "description": "Constant metric (sigma=0) or zero-variance axis score causes division-by-zero / spurious flags.",
+      "severity": "low",
+      "mitigation": "z := 0.0 when sigma < 1e-10; per-axis flag suppressed when sigma_S <= 1e-10 (matches reference guards).",
+      "linked_features": ["F-003", "F-004"]
+    },
+    {
+      "id": "R-04",
+      "description": "Alert storms / flag thrashing under marginal drift degrade operator trust.",
+      "severity": "medium",
+      "mitigation": "EWMA theta absorbs regime shifts by design; k defaults intentionally strict (chi2_A(0.99)); true fix = sensitivity calibration, explicitly deferred to v1 with real data (TODO documented).",
+      "linked_features": ["F-004", "F-005", "F-012"]
+    },
+    {
+      "id": "R-05",
+      "description": "Population contamination: anomalous sessions absorbed into the population shift mu and inflate Sigma (masking effect on future detection).",
+      "severity": "medium",
+      "mitigation": "Two-sided winsorization (winsor_pct=0.99, quantiles over window*winsor_k lookback, stable caps + responsive covariance); candidates never clipped [P4]; residual coordinated-drift exposure documented (Assumption 10); flagged ticks recorded for forensics.",
+      "linked_features": ["F-007", "F-008"]
+    },
+    {
+      "id": "R-06",
+      "description": "Duplicate session ids across ticks corrupt the population window.",
+      "severity": "low",
+      "mitigation": "absorb dedups on session_id (batch-internal and vs retained); contract documented and property-tested.",
+      "linked_features": ["F-007"]
+    },
+    {
+      "id": "R-07",
+      "description": "Checkpoint schema evolution breaks previously written snapshots.",
+      "severity": "medium",
+      "mitigation": "format_version column; loaders reject unknown versions with explicit ValueError.",
+      "linked_features": ["F-010", "F-011"]
+    },
+    {
+      "id": "R-08",
+      "description": "Partial checkpoint write (crash mid-save) corrupts the only state copy.",
+      "severity": "medium",
+      "mitigation": "Atomic temp-dir + rename in save_checkpoint; pre-existing checkpoint intact on injected failure.",
+      "linked_features": ["F-010", "F-011"]
+    },
+    {
+      "id": "R-09",
+      "description": "Huge candidate batches (1e4-1e7 sessions) overwhelm per-tick queue build.",
+      "severity": "medium",
+      "mitigation": "All Tier 2 math vectorized (batch d2 via (F-mu) @ Sigma_inv), O(S*A^2); no per-session Python loops; [P3] soak test at scale.",
+      "linked_features": ["F-008", "F-009", "F-012"]
+    },
+    {
+      "id": "R-10",
+      "description": "Timezone / tick-alignment drift between raw-log and LLM-judge data.",
+      "severity": "low",
+      "mitigation": "Out of scope by design (Assumption 1): tick index is an integer sequence; wall-clock semantics belong to the caller. Partial/late-arriving axes are a v1+ extension.",
+      "linked_features": []
+    },
+    {
+      "id": "R-11",
+      "description": "min_population never reached in low-volume deployments, silently disabling Tier 2.",
+      "severity": "low",
+      "mitigation": "score_sessions returns None scores with explicit note; no silent zeros.",
+      "linked_features": ["F-008"]
+    },
+    {
+      "id": "R-12",
+      "description": "Aggregation function misconfiguration (unknown agg name) discovered at runtime.",
+      "severity": "low",
+      "mitigation": "Validated at config construction; registry lookup fails fast with KeyError.",
+      "linked_features": ["F-001", "F-002"]
+    }
+  ],
+  "implementation_phases": [
+    {
+      "phase": 1,
+      "name": "Foundations",
+      "description": "All frozen dataclasses, config validation + JSON codec, aggregation registry. Prerequisite for every other phase.",
+      "feature_ids": ["F-001", "F-002"]
+    },
+    {
+      "phase": 2,
+      "name": "Tier 1 AMDM core",
+      "description": "Rolling z-scores, per-axis EWMA monitor, joint Mahalanobis/chi-square detector, advance orchestration with reference-implementation parity.",
+      "feature_ids": ["F-003", "F-004", "F-005", "F-006"]
+    },
+    {
+      "phase": 3,
+      "name": "Tier 2 sessions",
+      "description": "Population window with winsorization, session scoring, review queue stratification.",
+      "feature_ids": ["F-007", "F-008", "F-009"]
+    },
+    {
+      "phase": 4,
+      "name": "Persistence & facade",
+      "description": "Parquet checkpoint save/load, Monitor stateful facade, Airflow-style workflow.",
+      "feature_ids": ["F-010", "F-011"]
+    },
+    {
+      "phase": 5,
+      "name": "Hardening & release",
+      "description": "Property-based soak tests, restricted mutation testing, release hygiene (README, coverage gate, lint/type clean).",
+      "feature_ids": ["F-012", "F-013", "F-014"]
+    }
+  ]
+}
