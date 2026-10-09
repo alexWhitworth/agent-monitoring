@@ -646,7 +646,7 @@
       "description": "Top-level pure advance(state, tick) -> (state', TickResult) wiring Steps 1-6 (0.0-fill S entries during axis warm-up, reference parity), plus [O3] parity suite against references/AMDM.py on the three seeded scenarios.",
       "phase": "2d",
       "priority": 6,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-003", "F-004", "F-005"],
       "linked_schemas": ["DS-004", "DS-008"],
