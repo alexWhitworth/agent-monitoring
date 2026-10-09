@@ -519,7 +519,7 @@
       "description": "src/agent_monitor/agg.py: registry mapping 'mean' | 'max' | 'l2' to pure functions over non-empty z-score sequences; empty input raises ValueError (axis warm-up is handled upstream).",
       "phase": "1b",
       "priority": 2,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-001"],
       "linked_schemas": [],
