@@ -580,7 +580,7 @@
       "description": "src/agent_monitor/axis.py (Steps 2-4): S_A aggregation, EWMA theta_A with cold start at first S_A, sigma_S over full S_A window, flag iff sigma_S > 1e-10 and |S_A - theta_A| > k * sigma_S.",
       "phase": "2b",
       "priority": 4,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-001", "F-002", "F-003"],
       "linked_schemas": ["DS-003", "DS-006", "DS-008"],
