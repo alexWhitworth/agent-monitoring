@@ -1,0 +1,10 @@
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+__pycache__/
+.python-version
+

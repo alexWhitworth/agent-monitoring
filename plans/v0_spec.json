@@ -486,7 +486,7 @@
       "description": "src/agent_monitor/types.py + config.py: all DS-001..DS-011 frozen dataclasses (zero logic), MonitorConfig/QueueConfig validation, k=None -> chi2_A(0.99) resolution, canonical JSON codec for checkpoints.",
       "phase": "1a",
       "priority": 1,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": [],
       "linked_schemas": ["DS-001", "DS-002", "DS-003", "DS-004", "DS-005", "DS-006", "DS-007", "DS-008", "DS-009", "DS-010", "DS-011"],
