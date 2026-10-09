@@ -746,7 +746,7 @@
       "description": "src/agent_monitor/queue.py [CRITICAL]: five strata (top_k, flagged, per_axis, uniform, reserved) in priority order; disjoint membership; min(budget, available) with shortfall cascade within the same build call; seeded RNG; reserved never filled. mutmut target.",
       "phase": "3c",
       "priority": 9,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-008"],
       "linked_schemas": ["DS-002", "DS-010"],
