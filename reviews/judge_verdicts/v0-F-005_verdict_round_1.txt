@@ -1,0 +1,51 @@
+================================================================================
+JUDGE VERDICT: F-005 (Joint anomaly detector)
+ROUND: 1
+DATE: 2026-10-09
+================================================================================
+
+VERDICT: PASS
+
+================================================================================
+SCORECARD
+================================================================================
+
+Acceptance Criteria:
+  [MET] [O1] Welford mean and scatter match np.mean/np.cov(ddof=1) within 1e-9
+         on >= 100 hypothesis-generated sequences (verified: 200 examples)
+  [MET] D2 >= 0 and p_value in [0, 1] on all generated inputs
+         (verified: 200 examples, no NaN/Inf)
+  [MET] Warming-up result (D2=None, flagged=False) for n < min_warm
+  [MET] flagged == (D2 > chi2.ppf(1-alpha, A)) exactly on all generated inputs
+  [MET] Ridge-regularized covariance: singular case raises LinAlgError
+         with informative message
+  [MET] Chi-square threshold computed correctly
+
+Test Coverage: 100% (joint.py: 35/35)
+Mutation Testing: Deferred to F-013 (mutmut on joint.py)
+
+Contract Compliance:
+  [MET] API-006: welford_update(n, mu, M2, S) -> (n, mu, M2)
+  [MET] API-007: d_squared(S, mu, sigma_inv) -> float | ndarray
+  [MET] API-008: update_joint(state, S_vector) -> (state, JointResult)
+  [MET] All JointResult fields populated per DS-007 schema
+
+================================================================================
+FINDINGS
+================================================================================
+
+ADVISORY (joint.py:80):
+  Variable `A` shadowed by function parameter. The noqa: N806 suppresses
+  this but it's mathematically correct notation (A = number of axes).
+
+ADVISORY (joint.py:119-122):
+  LinAlgError re-raised with from exc (B904 compliance). Informative
+  message includes ridge value for debugging.
+
+================================================================================
+REQUIRED ACTIONS
+================================================================================
+
+None. All acceptance criteria MET. Mutation testing deferred to F-013.
+
+================================================================================

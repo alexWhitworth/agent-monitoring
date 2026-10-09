@@ -1,0 +1,56 @@
+================================================================================
+JUDGE VERDICT: F-003 (Rolling z-score normalizer)
+ROUND: 1
+DATE: 2026-10-09
+================================================================================
+
+VERDICT: CONDITIONAL_PASS
+
+================================================================================
+SCORECARD
+================================================================================
+
+Acceptance Criteria:
+  [MET] zscore returns (None, buf', count') while count < 2
+  [MET] zscore returns 0.0 when window sigma < 1e-10 (constant metric)
+  [MET] hypothesis: z matches buffer-recomputed oracle within 1e-12
+         on >= 100 generated streams
+  [MET] After w+5 updates the buffer contains exactly the last w samples
+  [MET] Ring-buffer eviction verified with exact array contents
+  [MET] Cross-wrap oracle match verified
+
+Test Coverage: 100% (normalizer.py: 24/24)
+Mutation Testing: N/A (excluded per spec)
+
+Edge Cases Checked:
+  [MET] Constant metric (plan R3)
+  [MET] Near-constant (sigma < 1e-10 triggers z=0.0)
+  [MET] Exactly 2 samples
+  [MET] Window wrap-around boundary: positions verified exact
+
+================================================================================
+FINDINGS
+================================================================================
+
+ADVISORY (normalizer.py:12):
+  The docstring says "count: Number of valid samples in buf (<= w)" but
+  the actual implementation uses count as total inserts (unbounded).
+  The docstring should clarify: "count: Total number of inserts so far
+  (unbounded); valid sample count = min(count, w)."
+  This matches the API contract (API-004) which doesn't constrain count
+  to <= w, and the axis module correctly uses the unbounded count.
+
+ADVISORY (normalizer.py:43-53):
+  The ring-buffer reconstruction for count > w case uses np.concatenate
+  which creates a copy. This is O(w) per call, consistent with the spec's
+  O(w) complexity budget. Could be optimized with np.take or stride tricks
+  in a future version, but acceptable for v0.
+
+================================================================================
+REQUIRED ACTIONS
+================================================================================
+
+1. [ADVISORY] Fix docstring on normalizer.py: "count: Total number of
+   inserts so far (unbounded int)." to avoid confusion.
+
+================================================================================

@@ -1,0 +1,65 @@
+================================================================================
+JUDGE VERDICT: F-004 (Per-axis monitor)
+ROUND: 1
+DATE: 2026-10-09
+================================================================================
+
+VERDICT: CONDITIONAL_PASS
+
+================================================================================
+SCORECARD
+================================================================================
+
+Acceptance Criteria:
+  [MET]   S_A equals agg applied to normalizer's valid z-scores within 1e-12
+  [MET]   theta cold-starts at first S_A and follows EWMA recurrence
+  [MET]   flagged is False whenever sigma_S <= 1e-10 (plan R3 guard)
+  [MET]   flagged equals exact predicate |S_A - theta_A| > k * sigma_S
+          on >= 1000 hypothesis cases (verified via flag_predicate_exact test)
+  [MET]   axis_count increments only when S_A is written
+  [MET]   Wrong metric count raises ValueError
+  [MET]   Non-finite values raise ValueError
+  [MET]   State updates: metric_count, axis_count, theta all verified
+
+Test Coverage: 100% (axis.py: 86/86)
+Mutation Testing: N/A (excluded per spec)
+
+Contract Compliance (API-005):
+  [MET] Signature: update_axis(state, a, X_a, agg_fn) -> (state, AxisResult)
+  [MET] Returns new MonitorState with updated per-axis buffers
+  [MET] AxisResult fields populated per DS-006 schema
+
+Edge Cases Checked:
+  [MET] Axis warm-up (all metrics count < 2)
+  [MET] sigma_S at 1e-10 boundary (suppressed flagging)
+  [MET] Post-regime-shift theta absorption
+  [MET] Single-metric axis warm-up
+  [MET] Flagging with k=0.5 and spike injection (verified fires)
+
+================================================================================
+FINDINGS
+================================================================================
+
+ADVISORY (axis.py:93):
+  axis_count was originally accessed as axis_count_arr[0] on a 0-d array
+  from np.copy(). This was fixed to int(state.axis_count[a]) during 
+  implementation. Correct now.
+
+ADVISORY (axis.py:60-62):
+  The non-finite check uses float(np.isfinite(x_f)) which converts each
+  metric value to Python float via float(x). For large float64 arrays
+  this per-element conversion adds overhead. Acceptable for v0 (A*M_a small).
+
+ADVISORY (axis.py:118):
+  _rolling_mean_std computes mean + std over the full axis_buf ring.
+  The mu value is unused (only sigma_S is used). Acceptable.
+
+BLOCKING: None.
+
+================================================================================
+REQUIRED ACTIONS
+================================================================================
+
+None. All acceptance criteria MET.
+
+================================================================================

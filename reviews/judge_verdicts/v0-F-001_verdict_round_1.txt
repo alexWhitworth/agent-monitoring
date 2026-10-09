@@ -1,0 +1,58 @@
+================================================================================
+JUDGE VERDICT: F-001 (Types & config)
+ROUND: 1
+DATE: 2026-10-09
+================================================================================
+
+VERDICT: CONDITIONAL_PASS
+
+================================================================================
+SCORECARD
+================================================================================
+
+Acceptance Criteria:
+  [MET]   uv run pytest tests/test_config.py passes (53 tests, 0 failures)
+  [MET]   Every validation rule has both accept-case and reject-case
+  [MET]   k=None resolves to scipy.stats.chi2.ppf(0.99, df=A) within 1e-9
+  [MET]   A=5 -> k=15.0863 (verified: 15.08627246938899)
+  [MET]   config_to_json -> config_from_json round-trip yields dataclass-equal
+  [MET]   mypy --strict clean on types.py and config.py
+
+Test Coverage: 100% (config.py: 64/64, types.py: 171/171)
+Mutation Testing: N/A (excluded per spec)
+
+Edge Cases Checked:
+  [MET] Unknown agg name rejected at construction (plan R12)
+  [MET] winsor_pct boundary: 0 and 1 rejected; None accepted
+  [MET] k provided <= 0 rejected
+  [MET] All 11 frozen dataclasses (DS-001..DS-011) verified frozen
+  [MET] NumPy arrays marked read-only in __post_init__
+
+================================================================================
+FINDINGS
+================================================================================
+
+ADVISORY (types.py:253):
+  MonitorState.axis_count is defined as (A,) int64, but the spec says 
+  "np.ndarray (A,) int64 read-only S_A history counts". The current 
+  implementation stores a single scalar count per axis in a 1D array, 
+  which is correct. No issue - just verifying shape semantics match.
+
+ADVISORY (types.py:23):
+  Unused import `field` from dataclasses was removed during ruff fix.
+  Verified clean after lint pass.
+
+ADVISORY (config.py:84):
+  validate_monitor_config uses `# type: ignore[operator]` for cfg.k access
+  because k is resolved to float by this point. The resolve-step returns 
+  a new MonitorConfig with k=float. This is safe but could be cleaner with
+  a local variable.
+
+================================================================================
+REQUIRED ACTIONS
+================================================================================
+
+None. All acceptance criteria MET. The ADVISORY items are non-blocking
+and acceptable for v0.
+
+================================================================================

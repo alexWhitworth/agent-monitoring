@@ -109,6 +109,31 @@ class TestAbsorb:
         state = absorb(state, sf, tick_flagged=True)
         assert state.population.tick_flagged[0]
 
+    def test_absorb_dedup_all_with_eviction(self) -> None:
+        """All session ids already retained; eviction still occurs."""
+        state = _make_fresh_state(population_window=5, winsor_k=1, window=5, tick=10)
+        # Add a row at tick=6 (within retention window: cutoff=10-5+1=6)
+        sf1 = SessionFeatures(ids=("keep",), tick=6, F=np.array([[1.0, 2.0]]))
+        state = absorb(state, sf1, tick_flagged=False)
+        assert len(state.population.ids) == 1
+        # Advance tick, then call absorb with same id -> dedup, but eviction still runs
+        object.__setattr__(state, "tick", 15)  # cutoff = 15-5+1 = 11
+        sf2 = SessionFeatures(ids=("keep",), tick=14, F=np.array([[1.0, 2.0]]))
+        state = absorb(state, sf2, tick_flagged=False)
+        # The old row at tick=6 should be evicted (6 < 11), no new row added
+        assert len(state.population.ids) == 0
+
+    def test_absorb_no_new_rows_no_eviction(self) -> None:
+        """All ids duplicates and all ticks recent: fast-path returns state."""
+        state = _make_fresh_state(population_window=10, winsor_k=1, window=10, tick=0)
+        sf1 = SessionFeatures(ids=("a",), tick=0, F=np.array([[1.0, 2.0]]))
+        state = absorb(state, sf1, tick_flagged=False)
+        assert len(state.population.ids) == 1
+        # Same tick, same id, all recent: no-op
+        sf2 = SessionFeatures(ids=("a",), tick=0, F=np.array([[1.0, 2.0]]))
+        state2 = absorb(state, sf2, tick_flagged=False)
+        assert state2 is state  # fast path returned same state object
+
 
 # ---------------------------------------------------------------------------
 # winsor_caps
