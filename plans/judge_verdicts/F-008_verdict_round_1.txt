@@ -1,0 +1,65 @@
+================================================================================
+JUDGE VERDICT: F-008 — Session Scoring
+================================================================================
+Verdict: CONDITIONAL_PASS
+Date:    2026-10-09
+Round:   1
+Judge:   agent-judge
+
+================================================================================
+SCORECARDS
+================================================================================
+Acceptance Criteria:
+  [MET] batch d2 matches per-session d_squared loop within 1e-10
+         (hypothesis: 200 examples, passes reliably)
+  [MET] scores have d2=None, p_value=None while population n < min_population
+         (TestWarmUpGating: 4 tests covering empty, below-min, per-session,
+          large-batch scenarios)
+  [MET] [P4] candidate feature beyond cap yields strictly greater d2
+         (TestP4BeyondCap: 3 unit tests + 100 hypothesis examples)
+  [MET] all emitted d2/p_value finite on adversarial finite inputs
+         (TestNoNaNInf: 6 parametrized extreme inputs + bulk test +
+          zero-variance edge case)
+
+Test Coverage:   100% (population.py: 94/94 statements)
+Test Count:      26 tests (19 unit + 7 hypothesis/property)
+Mutation Score:  N/A (deferred to F-013; population.py is a mutmut target)
+
+================================================================================
+FINDINGS
+================================================================================
+FINDING-001 [ADVISORY] test_scoring.py: Unused import `SessionScore`
+  File: tests/test_scoring.py:20
+  `from agent_monitor.types import ..., SessionScore, ...`
+  SessionScore is imported but never directly referenced in test code.
+  Action: Remove unused import.
+
+FINDING-002 [ADVISORY] test_scoring.py: Missing trailing newline (W292)
+  File: tests/test_scoring.py:585
+  Ruff auto-fixable.
+
+FINDING-003 [ADVISORY] test_scoring.py: Argument name `F` violates N803
+  File: tests/test_scoring.py:324
+  Parametrized test parameter `F` should be lowercase per PEP 8.
+  Action: Rename to `f_vals` or add `# noqa: N803`.
+
+FINDING-004 [ADVISORY] test_scoring.py: Line too long (E501)
+  File: tests/test_scoring.py:20
+  Long import line (105 chars vs 100 limit).
+
+================================================================================
+REQUIRED ACTIONS
+================================================================================
+1. [ADVISORY] Fix ruff lint issues in tests/test_scoring.py:
+   - Remove unused `SessionScore` import
+   - Add trailing newline
+   - Rename `F` parameter or add N803 suppression
+   - Break long import line
+
+No BLOCKING findings. Core logic (`score_sessions` in population.py) is correct,
+all acceptance criteria are satisfied with value-asserting tests and hypothesis
+property tests. The [P4] ordering invariant is verified via both unit and
+hypothesis tests. Batch-vs-loop equivalence is verified statistically.
+
+Mutation testing on population.py is deferred to F-013 per spec schedule.
+================================================================================

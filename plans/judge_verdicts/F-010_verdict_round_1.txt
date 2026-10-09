@@ -1,0 +1,131 @@
+================================================================================
+JUDGE VERDICT: F-010 — Parquet Checkpoint Persistence
+================================================================================
+Verdict: CONDITIONAL_PASS
+Date:    2026-10-09
+Round:   1
+Judge:   agent-judge
+
+================================================================================
+SCORECARDS
+================================================================================
+Acceptance Criteria:
+  [MET] [D2] save -> load round-trip: all arrays byte-equal (np.array_equal),
+         writeable == False, config dataclass-equal
+         (TestSaveLoadRoundTrip: 5 tests covering empty pop, populated pop,
+          theta=None, read-only flags, double round-trip idempotence)
+  [MET] [D2] next advance after round-trip identical within 1e-12
+         (TestD2RoundTrip: 4 integration tests — single advance, advance
+          with population, multiple advances over 20 ticks)
+  [MET] load rejects format_version != 1 with explicit ValueError
+         (TestFormatVersion: 2 tests)
+  [MET] atomic write: temp-dir + rename; injected mid-write failure leaves
+         pre-existing checkpoint intact
+         (TestAtomicWrite: 2 tests)
+
+Test Coverage:   100% (checkpoint.py: 114/114 statements)
+Test Count:      21 unit + 4 integration = 25 tests
+Mutation Score:  N/A (checkpoint.py excluded per spec; I/O boundary)
+
+================================================================================
+FINDINGS
+================================================================================
+FINDING-001 [BLOCKING] mypy --strict: 6 arg-type errors in checkpoint.py
+  File: src/agent_monitor/checkpoint.py:232-239
+
+  _ndarray_from_bytes() returns np.ndarray | None, but MonitorState fields
+  (metric_buf, metric_count, axis_buf, axis_count, mu, M2) are typed as
+  non-optional np.ndarray. _validate_state_arrays() ensures non-None before
+  construction, but mypy cannot track cross-function type narrowing.
+
+  Fix: Add assert statements after _validate_state_arrays() or inline the
+  validation before MonitorState construction. Example at line ~224-240:
+
+    metric_buf = _ndarray_from_bytes(...)
+    assert metric_buf is not None, "metric_buf must not be None"
+    # Repeat for metric_count, axis_buf, axis_count, mu, M2
+
+  Alternately, restructure _validate_state_arrays to use TypeGuard.
+
+FINDING-002 [BLOCKING] mypy --strict: 2 import-untyped errors for pyarrow
+  File: src/agent_monitor/checkpoint.py:20-21
+
+  pyarrow lacks type stubs. This matches the pre-existing pattern for scipy
+  in joint.py which uses `# type: ignore[import-untyped]`.
+
+  Fix: Add `# type: ignore[import-untyped]` to pyarrow imports:
+    import pyarrow as pa  # type: ignore[import-untyped]
+    import pyarrow.parquet as pq  # type: ignore[import-untyped]
+
+FINDING-003 [BLOCKING] mypy --strict: 1 no-any-return in _ndarray_from_bytes
+  File: src/agent_monitor/checkpoint.py:74
+
+  Function signature: def _ndarray_from_bytes(data: bytes | None) -> np.ndarray | None
+  The function may return Any from np.load(), which mypy flags.
+
+  Fix: Add explicit return type annotation or cast:
+    arr: np.ndarray = np.load(buf, allow_pickle=False)
+
+FINDING-004 [ADVISORY] checkpoint.py: Unused import `json`
+  File: src/agent_monitor/checkpoint.py:13
+  Ruff auto-fixable.
+
+FINDING-005 [ADVISORY] checkpoint.py: Import block unsorted (I001)
+  File: src/agent_monitor/checkpoint.py:12-24
+  Ruff auto-fixable.
+
+FINDING-006 [ADVISORY] checkpoint.py: Lines too long (E501)
+  File: src/agent_monitor/checkpoint.py:131,200,224,272,284,286
+  Six lines exceed 100-character limit.
+
+FINDING-007 [ADVISORY] checkpoint.py: Missing trailing newline (W292)
+  File: src/agent_monitor/checkpoint.py:333
+
+FINDING-008 [ADVISORY] test_checkpoint.py: Unused imports
+  File: tests/test_checkpoint.py:8-9,27-33
+  `shutil`, `tempfile`, `AxisResult`, `JointResult`, `TickResult` unused.
+
+FINDING-009 [ADVISORY] test_checkpoint.py: RUF043 — unescaped pattern
+  File: tests/test_checkpoint.py:341,349
+  `match="state.parquet"` contains `.` which is a regex metacharacter.
+  Use `match=re.escape("state.parquet")` or raw string.
+
+FINDING-010 [ADVISORY] test_checkpoint_integration.py: B905 — zip without strict
+  File: tests/test_checkpoint_integration.py:154
+  `zip(t1.axis_results, t2.axis_results)` should specify `strict=True`.
+
+FINDING-011 [ADVISORY] checkpoint.py: Dead code removed (positive finding)
+  The Actor correctly removed unused helper functions _make_readonly_float64
+  and _make_readonly_int64 per the code quality guidelines. Arrays are made
+  read-only via arr.flags.writeable = False directly in _ndarray_from_bytes.
+
+================================================================================
+REQUIRED ACTIONS
+================================================================================
+1. [BLOCKING] Fix mypy --strict errors (FINDINGS 001-003):
+   a. Add assert statements or TypeGuard for array non-None checks before
+      MonitorState construction (lines ~224-240)
+   b. Add `# type: ignore[import-untyped]` for pyarrow imports
+   c. Add explicit type annotation in _ndarray_from_bytes for np.load return
+
+2. [ADVISORY] Fix ruff lint issues (FINDINGS 004-010):
+   - Remove unused `json` import, sort imports
+   - Break long lines
+   - Add trailing newline
+   - Remove unused test imports
+   - Fix unescaped regex patterns in pytest.raises match=
+   - Add strict=True to zip() call
+
+================================================================================
+NOTES
+================================================================================
+- The Parquet serialization design (binary .npy blobs, format_version column,
+  config_json for topology) satisfies the "data-only, no pickle" requirement.
+- Atomic write via tempfile.mkdtemp + os.rename is correctly implemented.
+- The [D2] round-trip integration test (test_multiple_advances_after_round_trip)
+  provides strong evidence that persistence is lossless — 20 consecutive
+  advances produce identical results from original vs restored state.
+- Edge cases covered: empty population, theta=None, large population (~1000),
+  config with k=None resolution, corrupted format_version, corrupted features,
+  missing files, overwrite.
+================================================================================

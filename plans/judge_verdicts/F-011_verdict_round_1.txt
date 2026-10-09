@@ -1,0 +1,83 @@
+================================================================================
+JUDGE VERDICT: F-011 — Monitor Facade
+================================================================================
+Verdict: CONDITIONAL_PASS
+Date:    2026-10-09
+Round:   1
+Judge:   agent-judge
+
+================================================================================
+SCORECARDS
+================================================================================
+Acceptance Criteria:
+  [MET] Monitor.update(tick) results identical to advance() pure calls
+         across >= 100 ticks within 1e-12
+         (TestDelegation.test_update_matches_advance: 100 ticks, mu/M2 atol=1e-12)
+  [MET] Monitor.restore(path) state equals load_checkpoint(path);
+         Monitor.save(path) yields a loadable checkpoint
+         (TestRestoreSave: 3 tests covering round-trip, continued advance,
+          last_alert reset on restore)
+  [MET] sessions absorbed in the same tick as update() carry
+         tick_flagged == tick_result.alert
+         (TestTickFlagged: 4 tests — normal tick, alerting spike,
+          pre-update absorb default, persistence across multiple absorbs)
+  [N/A] README documents Airflow-style workflow
+         (Deferred to F-014 release hygiene)
+
+Test Coverage:   100% (monitor.py: 44/44 statements)
+Test Count:      18 tests (15 unit + 3 integration across 2 test files)
+Mutation Score:  N/A (monitor.py excluded per spec — delegation-only class)
+
+================================================================================
+FINDINGS
+================================================================================
+FINDING-001 [BLOCKING] Unused `# type: ignore` comments in restore()
+  File: src/agent_monitor/monitor.py:155-156
+
+  Lines `monitor._state = state  # type: ignore[attr-defined]` and
+  `monitor._last_alert = False  # type: ignore[attr-defined]` have unused
+  type: ignore directives. Since __init__ declares `self._state` and
+  `self._last_alert` with explicit types, mypy correctly infers them on
+  `Monitor` instances created via `object.__new__`.
+
+  Fix: Remove both `# type: ignore[attr-defined]` comments.
+
+FINDING-002 [ADVISORY] __all__ not sorted (RUF022)
+  File: src/agent_monitor/__init__.py:26
+  `Monitor` appears after `build_review_queue` but should be sorted.
+  Ruff auto-fixable.
+
+FINDING-003 [ADVISORY] monitor.py: import numpy inline in __init__
+  File: src/agent_monitor/monitor.py:57
+  `import numpy as np` is deferred inside __init__ to avoid top-level import.
+  Minor style issue; acceptable for avoiding circular imports but notable.
+
+================================================================================
+REQUIRED ACTIONS
+================================================================================
+1. [BLOCKING] Remove unused `# type: ignore[attr-defined]` comments in
+   monitor.py:155-156.
+
+2. [ADVISORY] Sort __all__ in __init__.py (RUF022 auto-fix).
+
+================================================================================
+NOTES
+================================================================================
+- The Monitor class correctly delegates all logic to pure functions: advance(),
+  absorb(), score_sessions(), build_review_queue(), save_checkpoint(),
+  load_checkpoint(). No detection logic of its own — satisfies the spec's
+  "No detection logic of its own" requirement.
+
+- Tick-flagged recording is correctly implemented: `_last_alert` is set from
+  `update()`'s TickResult.alert and used by the next `absorb()` call. Edge
+  cases handled: absorb before first update defaults to False, restore()
+  resets _last_alert to False.
+
+- The Airflow-style integration test (test_monitor_integration.py) exercises
+  the full restore → advance → absorb → score → save cycle across 3 simulated
+  days with 30 ticks/day and validates all invariants.
+
+- Monitor uses `object.__new__(cls)` in restore() rather than calling __init__,
+  which avoids re-initializing the state. This is a valid Python pattern for
+  classmethod constructors.
+================================================================================
