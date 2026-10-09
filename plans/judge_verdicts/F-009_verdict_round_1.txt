@@ -1,0 +1,75 @@
+================================================================================
+JUDGE VERDICT: F-009 — Review Queue Stratification
+================================================================================
+Verdict: CONDITIONAL_PASS
+Date:    2026-10-09
+Round:   1
+Judge:   agent-judge
+
+================================================================================
+SCORECARDS
+================================================================================
+Acceptance Criteria:
+  [MET] [A1] strata pairwise disjoint and |stratum| == min(budget, available)
+         after higher-priority strata (hypothesis: 200 examples)
+  [MET] [A1] 'reserved' key present and always empty; library never fills it
+         (TestBasicCorrectness.test_reserved_always_empty)
+  [MET] [D1] identical (state, seed, inputs) produce identical plans
+         (TestDeterminism + hypothesis: 100 examples)
+  [MET] [D1] different seed changes uniform stratum
+         (TestDeterminism.test_different_seed_different_uniform)
+  [MET] Shortfall cascade: unmet top_k budget flows to flagged stratum
+         (TestShortfallCascade: 3 tests with explicit cascade verification)
+  [MET] selected + unallocated == candidate set exactly
+         (TestBasicCorrectness + hypothesis)
+
+Test Coverage:   100% (queue.py: 65/65 statements)
+Test Count:      24 tests (18 unit + 6 hypothesis/property)
+Mutation Score:  N/A (deferred to F-013; queue.py is a mutmut target)
+
+================================================================================
+FINDINGS
+================================================================================
+FINDING-001 [ADVISORY] test_queue.py: Unused import `pytest`
+  File: tests/test_queue.py:11
+  `import pytest` is unused. Ruff auto-fixable.
+  Action: Remove unused import.
+
+FINDING-002 [ADVISORY] test_queue.py: Lines too long (E501)
+  File: tests/test_queue.py:307,607,695
+  Three lines exceed 100-character limit. Ruff auto-fixable.
+
+FINDING-003 [ADVISORY] test_queue.py: Missing trailing newline (W292)
+  File: tests/test_queue.py:755
+  Ruff auto-fixable.
+
+FINDING-004 [ADVISORY] src/agent_monitor/queue.py: Missing trailing newline (W292)
+  File: src/agent_monitor/queue.py:145
+  Ruff auto-fixable.
+
+FINDING-005 [ADVISORY] queue.py: Complexity — per-axis selection iterates
+  `remaining` list for each axis and recomputes `sorted()` within the loop.
+  Within the O(S log S) budget, but the repeated list scans (S candidates
+  x A axes) could be O(S*A log S) in the worst case. Acceptable for A <= ~10
+  per the spec's A <= ~10 assumption.
+
+================================================================================
+REQUIRED ACTIONS
+================================================================================
+1. [ADVISORY] Fix ruff lint issues:
+   - Remove unused `pytest` import in tests/test_queue.py
+   - Break long lines (E501)
+   - Add trailing newlines to queue.py and test_queue.py
+
+No BLOCKING findings. All five strata are correctly implemented with:
+- Priority ordering: top_k > flagged > per_axis > uniform > reserved
+- Disjoint membership enforced
+- Shortfall cascade correctly propagates unmet budget through strata
+- Seeded RNG with np.random.default_rng(seed) for reproducibility  
+- d2=None sessions sorted to bottom (won't appear in top_k)
+- Per-axis selection uses absolute feature magnitude with cross-axis dedup
+- Edge cases: empty candidates, zero budgets, all flagged, missing population
+  matches, single candidate, equal d2
+
+Mutation testing on queue.py is deferred to F-013 per spec schedule.
+================================================================================
