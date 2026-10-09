@@ -611,7 +611,7 @@
       "description": "src/agent_monitor/joint.py (Steps 5-6) [CRITICAL]: Welford rank-one mean/scatter, ridge-regularized Sigma inversion, D2, chi-square p-value and threshold, min_warm gate. mutmut target.",
       "phase": "2c",
       "priority": 5,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-001"],
       "linked_schemas": ["DS-003", "DS-007", "DS-008"],
