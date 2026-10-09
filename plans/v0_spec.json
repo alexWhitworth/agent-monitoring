@@ -680,7 +680,7 @@
       "description": "src/agent_monitor/population.py (Tier 2 core) [CRITICAL]: absorb/dedup/evict with retention = max(population_window, window*winsor_k); two-sided winsor caps over full retention; exact winsorized empirical (mu, Sigma_inv) over last population_window ticks with ridge + singularity guard. mutmut target.",
       "phase": "3a",
       "priority": 7,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-001"],
       "linked_schemas": ["DS-003", "DS-005", "DS-011"],
