@@ -549,7 +549,7 @@
       "description": "src/agent_monitor/normalizer.py (Step 1): ring-buffer z-scores per metric with constant-metric guard and warm-up None semantics.",
       "phase": "2a",
       "priority": 3,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-001"],
       "linked_schemas": ["DS-003", "DS-004"],

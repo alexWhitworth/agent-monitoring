@@ -155,7 +155,8 @@ class TestHypothesisOracle:
     def test_mean_within_bounds(self, zs: list[float]) -> None:
         fn = get_agg("mean")
         result = fn(zs)
-        assert min(zs) - 1e-12 <= result <= max(zs) + 1e-12
+        # Due to fsum + float division rounding, result may exceed max by ~1 ULP
+        assert min(zs) - 1e-10 <= result <= max(zs) + 1e-10
 
     @given(_zs_seq)
     def test_outputs_are_finite(self, zs: list[float]) -> None:
