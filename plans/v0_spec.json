@@ -715,7 +715,7 @@
       "description": "Batch d2 + p-values for candidate sessions vs winsorized population (Tier 2). Candidates scored RAW (never clipped). Vectorized via (F - mu) @ Sigma_inv.",
       "phase": "3b",
       "priority": 8,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-005", "F-007"],
       "linked_schemas": ["DS-005", "DS-009"],
