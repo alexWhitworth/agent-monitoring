@@ -825,7 +825,7 @@
       "description": "src/agent_monitor/monitor.py: the only stateful class. Delegates to the pure core, rebinds state, records tick_flagged on sessions absorbed in the same tick, restore/save passthrough. No detection logic of its own.",
       "phase": "4b",
       "priority": 11,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-006", "F-007", "F-008", "F-009", "F-010"],
       "linked_schemas": ["DS-003"],

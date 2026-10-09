@@ -7,6 +7,7 @@ from agent_monitor.config import (
     validate_monitor_config,
     validate_queue_config,
 )
+from agent_monitor.monitor import Monitor
 from agent_monitor.queue import build_review_queue
 from agent_monitor.types import (
     AxisResult,
@@ -35,6 +36,7 @@ __all__ = [
     "TickMetrics",
     "TickResult",
     "build_review_queue",
+    "Monitor",
     "config_from_json",
     "config_to_json",
     "load_checkpoint",
