@@ -152,8 +152,8 @@ class Monitor:
         """
         state = load_checkpoint(path)
         monitor = object.__new__(cls)
-        monitor._state = state  # type: ignore[attr-defined]
-        monitor._last_alert = False  # type: ignore[attr-defined]
+        monitor._state = state
+        monitor._last_alert = False
         return monitor
 
     # ------------------------------------------------------------------
