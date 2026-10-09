@@ -17,8 +17,8 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
+import pyarrow as pa  # type: ignore[import-untyped]
+import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from agent_monitor.config import config_from_json, config_to_json
 from agent_monitor.types import MonitorConfig, MonitorState, SessionWindow
@@ -69,7 +69,7 @@ def _ndarray_from_bytes(data: bytes | None) -> np.ndarray | None:
     if data is None or len(data) == 0:
         return None
     buf = io.BytesIO(data)
-    arr = np.load(buf, allow_pickle=False)
+    arr: np.ndarray = np.load(buf, allow_pickle=False)
     arr.flags.writeable = False
     return arr
 
@@ -222,6 +222,13 @@ def load_checkpoint(path: Path) -> MonitorState:
 
     # Validate array shapes against config
     _validate_state_arrays(config, tick, metric_buf, metric_count, theta, axis_buf, axis_count, n_joint, mu, M2)
+    # Type narrowing: _validate_state_arrays ensures non-None for required fields
+    assert metric_buf is not None
+    assert metric_count is not None
+    assert axis_buf is not None
+    assert axis_count is not None
+    assert mu is not None
+    assert M2 is not None
 
     # Load population
     population = _load_population_parquet(pop_file, config)

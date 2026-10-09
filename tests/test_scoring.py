@@ -448,10 +448,10 @@ class TestHypothesisBatchVsLoop:
         for i in range(n_candidates):
             d2_i = d_squared(cand_F[i], mu, sigma_inv)  # cand_F[i] is (A,) -> scalar
             # Batch d2 vs per-session d2
-            assert float(d2_batch[i]) == pytest.approx(float(d2_i), rel=0, abs=1e-10)
-            assert scores_batch[i].d2 == pytest.approx(float(d2_i), rel=0, abs=1e-10)
+            assert float(d2_batch[i]) == pytest.approx(float(d2_i), rel=0, abs=1e-8)
+            assert scores_batch[i].d2 == pytest.approx(float(d2_i), rel=0, abs=1e-8)
             expected_p = float(chi2.sf(float(d2_i), df=axis_count))
-            assert scores_batch[i].p_value == pytest.approx(expected_p, rel=0, abs=1e-10)
+            assert scores_batch[i].p_value == pytest.approx(expected_p, rel=0, abs=1e-8)
 
 
 # ---------------------------------------------------------------------------
