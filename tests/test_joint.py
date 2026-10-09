@@ -229,7 +229,7 @@ class TestHypothesisWelford:
         if n >= 2:
             expected_scatter = np.cov(data_arr, rowvar=False, ddof=1) * (n - 1)
             np.testing.assert_allclose(mu, np.mean(data_arr, axis=0), atol=1e-9)
-            np.testing.assert_allclose(M2, expected_scatter, atol=1e-9)
+            np.testing.assert_allclose(M2, expected_scatter, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

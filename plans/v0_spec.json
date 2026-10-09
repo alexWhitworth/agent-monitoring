@@ -782,7 +782,7 @@
       "description": "src/agent_monitor/checkpoint.py (the only I/O module): save state to a Parquet checkpoint directory (state.parquet nested single-row + population.parquet tabular, DS-012) via temp-dir + atomic rename; load with format_version and shape validation; arrays re-marked read-only.",
       "phase": "4a",
       "priority": 10,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-001", "F-004", "F-005", "F-007"],
       "linked_schemas": ["DS-003", "DS-011", "DS-012"],
