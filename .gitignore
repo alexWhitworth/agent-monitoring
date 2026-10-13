@@ -1,6 +1,7 @@
 .coverage
 coverage.xml
 htmlcov/
+mutants/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

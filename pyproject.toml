@@ -59,6 +59,20 @@ disallow_incomplete_defs = true
 disallow_any_generics = true
 warn_return_any = true
 
+[tool.mutmut]
+# F-013: mutation testing restricted to the critical Tier 1/Tier 2 math modules
+# (user directive). All other modules are excluded — see MUTATION_NOTES.md.
+source_paths = ["src"]
+only_mutate = [
+    "src/agent_monitor/joint.py",
+    "src/agent_monitor/population.py",
+    "src/agent_monitor/queue.py",
+]
+# --no-cov: neutralize the pytest-cov addopts + fail_under gate from
+# [tool.pytest.ini_options]; otherwise partial per-mutant test runs fail the
+# coverage threshold and every mutant is spuriously "killed".
+pytest_add_cli_args = ["--no-cov"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=src/agent_monitor --cov-report=xml --cov-report=term-missing"
