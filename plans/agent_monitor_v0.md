@@ -386,8 +386,21 @@ def advance(state: MonitorState, tick: TickMetrics) -> tuple[MonitorState, TickR
 - **5b. Mutation testing (restricted)**: `mutmut` on `joint.py`,
   `population.py`, `queue.py` only; all generated mutants killed or explicitly
   justified. `depends_on: [5a]`
-- **5c. Release hygiene**: README with streaming + Airflow examples, coverage
-  ≥ 85%, ruff/mypy clean, uv lockfile. `depends_on: [5a, 5b, 4b]`
+- **5c. Anomaly-type DGP catalog** (`tests/dgps.py`): six seeded pure DGPs
+  mapped to the Schmidl et al. (2022) taxonomy — H₀ iid, point,
+  multivariate-coordinated, ramp (characterization only), subsequence burst,
+  Tier-2 contamination — each emitting full-lifecycle `TickMetrics` /
+  `SessionFeatures` streams with declared expected-flag semantics.
+  *Done when:* per-DGP semantics tests pass (determinism [G1]; per-type flags
+  [G2]; H₀ bands [G3] consistent with [P1]/[P3]) and ruff/mypy --strict are
+  clean on `tests/dgps.py`. Additive only: completed soak/parity tests are
+  NOT reopened. Taxonomy ref: Schmidl, Wenig & Papenbrock, VLDB 15(9), 2022,
+  DOI 10.14778/3538598.3538602. `depends_on: [1a, 2d, 3a]`
+- **5d. Release hygiene**: lean README (minimal quick-start, paper-default
+  parameter table, deferred-scope notes, links) with detailed runnable
+  streaming + Airflow examples in `examples/*.py` (synthetic data, public
+  API only), coverage ≥ 85%, ruff/mypy clean, uv lockfile.
+  `depends_on: [5a, 5b, 5c, 4b]`
 
 ## 6. System & Test Invariants
 
@@ -441,6 +454,22 @@ def advance(state: MonitorState, tick: TickMetrics) -> tuple[MonitorState, TickR
 - **[D2] [INTEGRATION]** `load(save(state)) ≡ state` (arrays byte-equal,
   read-only), and the next `advance` produces identical results either way.
 
+**DGP catalog semantics (5c)**
+- **[G1] [ATOMIC]** Stream generation is deterministic and causal: tick t is
+  a pure function of `(dgp_id, seed, t)`; same `(dgp_id, seed, length)` →
+  byte-identical stream (seeded `default_rng`).
+- **[G2] [INTEGRATION]** Each DGP declares expected-flag semantics per the
+  taxonomy, and the full pipeline realizes them: point (DGP-02) and
+  subsequence (DGP-05) anomalies flag both layers at onset, recovering
+  silently as EWMA θ re-absorbs; the multivariate +1.5σ coordinated shift
+  (DGP-03) flags the joint layer only (each marginal within k); Tier-2
+  contamination (DGP-06, 0.5% rows inside the p=0.99 two-sided clip tail)
+  leaves winsor caps stable and does not mask a shifted candidate session.
+- **[G3] [ATOMIC]** DGP-04 (single-axis ramp, +0.05σ/tick) is a
+  characterization, not a detection claim: EWMA absorption is asserted as
+  documented behavior (risk R4); DGP-01 (H₀) inherits the [P1]/[P3]
+  flag-rate bands.
+
 **Realism gate**
 - **[R1]** [INTEGRATION] tests under 2d/5a use synthetic streams that exercise
   the full lifecycle (warm-up → steady state → drift → spike → recovery) with
@@ -485,8 +514,10 @@ def advance(state: MonitorState, tick: TickMetrics) -> tuple[MonitorState, TickR
 | R1 | **Singular / near-singular covariance** (perfectly correlated axes, degenerate population) | ridge ε·I on both Σ̂; explicit `LinAlgError` → informative error; property test [P2] |
 | R2 | **0.0-fill during axis warm-up biases early joint μ/Σ** | Documented reference-parity choice; axis warm-up ≤ a few ticks vs min_warm=30; revisit in v1 |
 | R3 | **Constant metric (σ=0)** or **σ_{S_A}=0 axis** | z := 0.0; flag suppressed for that axis (matches reference guards) |
-| R4 | **Alert storms / flag thrashing** under marginal drift | EWMA θ absorbs regime shifts by design; k defaults intentionally strict (≈ χ²₅(0.99)); true fix = calibration, deferred to v1 with explicit TODO |
-| R5 | **Population contamination**: anomalies absorbed into (μ̂, Σ̂) shift the baseline and inflate Σ̂ (masking) | Mitigated by two-sided winsorization: per-axis clip at `winsor_pct` (default p99), quantiles estimated over the longer `window × winsor_k` lookback (stable caps, responsive covariance). Candidates are never clipped, so extremes still score extreme ([P4]). Residual: coordinated drift is inherently un-protectable (see Assumption 10); flagged ticks are recorded for downstream forensics |
+| R4 | **Alert storms / flag thrashing** under marginal drift | EWMA θ absorbs regime shifts by design; k defaults intentionally strict (≈ χ²₅(0.99)); true fix = calibration, deferred to v1 with explicit TODO; absorption
+  characterized by DGP-04 (§5c, [G3]) |
+| R5 | **Population contamination**: anomalies absorbed into (μ̂, Σ̂) shift the baseline and inflate Σ̂ (masking) | Mitigated by two-sided winsorization: per-axis clip at `winsor_pct` (default p99), quantiles estimated over the longer `window × winsor_k` lookback (stable caps, responsive covariance). Candidates are never clipped, so extremes still score extreme ([P4]). Residual: coordinated drift is inherently un-protectable (see Assumption 10); flagged ticks are recorded for downstream forensics; protection exercised
+  by DGP-06 (§5c, [G2]) |
 | R6 | **Duplicate session ids** across ticks | `absorb` dedups on (session_id); documented |
 | R7 | **Checkpoint schema evolution** breaks old snapshots | `format_version` column; loaders reject unknown versions loudly |
 | R8 | **Partial checkpoint write** (crash mid-save) | Atomic temp-dir + rename in `save_checkpoint` |
