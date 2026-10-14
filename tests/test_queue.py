@@ -753,3 +753,79 @@ class TestEdgeCases:
         for s in ("top_k", "flagged", "per_axis", "uniform"):
             all_sel.update(plan.strata[s])
         assert all_sel | set(plan.unallocated) == {"ghost", "phantom"}
+
+# ---------------------------------------------------------------------------
+# Mutation hardening (F-013): exact selection, ghost handling, cascade
+# ---------------------------------------------------------------------------
+
+
+class TestMutationHardening:
+    def test_plan_tick_reflects_tick_result(self) -> None:
+        """ReviewQueuePlan.tick is the TickResult's tick, in both return paths."""
+        state = _make_fresh_state(tick=0)
+        tr = _make_tick_result(tick=7)
+        qcfg = QueueConfig(top_k=1, flagged=0, per_axis=0, uniform=0, seed=0)
+        plan = build_review_queue(tr, (), state, qcfg)
+        assert plan.tick == 7
+
+        features = np.array([[1.0, 0.0], [2.0, 0.0]])
+        ids = ["a", "b"]
+        state = _absorb_sessions(state, ids, features)
+        scores = tuple(
+            SessionScore(id=sid, d2=float(i), p_value=0.5) for i, sid in enumerate(ids)
+        )
+        plan = build_review_queue(tr, scores, state, qcfg)
+        assert plan.tick == 7
+
+    def test_ghost_candidates_not_flagged(self) -> None:
+        """Candidates absent from the population default to not flagged."""
+        state = _make_fresh_state(tick=0)  # empty population
+        scores = (
+            SessionScore(id="g1", d2=1.0, p_value=0.5),
+            SessionScore(id="g2", d2=2.0, p_value=0.5),
+        )
+        tr = _make_tick_result()
+        qcfg = QueueConfig(top_k=0, flagged=5, per_axis=0, uniform=0, seed=0)
+        plan = build_review_queue(tr, scores, state, qcfg)
+        assert plan.strata["flagged"] == ()
+        # Ghosts may land in per_axis/uniform via cascade, but must not be flagged
+        placed = set(plan.unallocated)
+        for stratum in ("top_k", "per_axis", "uniform"):
+            placed.update(plan.strata[stratum])
+        assert placed == {"g1", "g2"}
+
+    def test_per_axis_selects_exact_extremes(self) -> None:
+        """per_axis takes the most extreme |feature| per axis, via the population."""
+        state = _make_fresh_state(tick=0)
+        features = np.array([[0.1, 0.1], [0.2, 7.0], [5.0, 0.3]])
+        ids = ["a", "b", "c"]
+        state = _absorb_sessions(state, ids, features)
+        scores = tuple(SessionScore(id=sid, d2=0.0, p_value=0.5) for sid in ids)
+        tr = _make_tick_result()
+        # per_axis=2 with A=2 -> 1 per axis
+        qcfg = QueueConfig(top_k=0, flagged=0, per_axis=2, uniform=0, seed=0)
+        plan = build_review_queue(tr, scores, state, qcfg)
+        assert set(plan.strata["per_axis"]) == {"b", "c"}
+
+    def test_flagged_shortfall_cascades_into_per_axis(self) -> None:
+        """Unfilled flagged budget cascades into the per_axis budget."""
+        state = _make_fresh_state(tick=0)
+        # 8 unflagged sessions: axis0 = 1..8, axis1 = 8..1 (disjoint top-3s)
+        unflagged = np.column_stack([np.arange(1.0, 9.0), np.arange(8.0, 0.0, -1.0)])
+        unflagged_ids = [f"s{i}" for i in range(8)]
+        flagged = np.array([[0.1, 0.1], [0.1, 0.1]])
+        flagged_ids = ["f0", "f1"]
+        state = _absorb_sessions(state, flagged_ids, flagged, tick_flagged=True)
+        state = _absorb_sessions(state, unflagged_ids, unflagged, tick_flagged=False)
+
+        ids = flagged_ids + unflagged_ids
+        scores = tuple(
+            SessionScore(id=sid, d2=float(i), p_value=0.5) for i, sid in enumerate(ids)
+        )
+        tr = _make_tick_result()
+        qcfg = QueueConfig(top_k=0, flagged=5, per_axis=4, uniform=0, seed=0)
+        plan = build_review_queue(tr, scores, state, qcfg)
+        # Only 2 flagged candidates for a budget of 5 -> cascade 3
+        assert set(plan.strata["flagged"]) == {"f0", "f1"}
+        # per_axis budget = 4 + 3 = 7 -> floor(7/2) = 3 per axis -> 6 distinct
+        assert len(plan.strata["per_axis"]) == 6

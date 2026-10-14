@@ -1,0 +1,146 @@
+================================================================================
+JUDGE VERDICT: F-013 — Restricted Mutation Testing
+================================================================================
+Verdict: CONDITIONAL_PASS
+Date:    2026-10-13
+Round:   1
+Judge:   agent-judge
+
+================================================================================
+SCORECARDS
+================================================================================
+Acceptance Criteria:
+  [MET] mutmut on joint.py, population.py, queue.py: zero surviving mutants,
+        or every survivor justified in MUTATION_NOTES.md
+        (Independent fresh run (rm -rf mutants; mutmut run): 592 mutants,
+         563 killed (95.1%), 29 survivors — reproduces the Actor's numbers
+         exactly. All 29 survivors are documented in MUTATION_NOTES.md and
+         every justification was independently verified — see Findings.)
+  [MET] Mutation exclusion list (all other modules) documented with rationale
+        in the repo
+        (MUTATION_NOTES.md "Excluded modules" table covers all 7 spec-named
+         modules plus advance.py, each with rationale mirroring the spec's
+         per-feature mutation_testing fields. ADVISORY A2: __init__.py, a
+         pure re-export module with zero logic, is absent from the table.)
+
+Test Suite:      263 passed, 0 failed; coverage 100% (gate: 85%)
+Type Check:      mypy --strict src/ clean (12 files)
+Lint:            ruff — zero new errors vs pre-F-013 baseline
+Mutation Score:  95.1% (563/592) — threshold >= 80% MET
+                 29/29 survivors justified; 0 unjustified core-logic mutants
+Rust/FFI:       N/A (no Rust in v0)
+
+================================================================================
+INDEPENDENT VERIFICATION PERFORMED
+================================================================================
+The Judge did not rely on Actor-reported results. All of the following were
+re-executed from scratch:
+
+1. Build: `uv pip install -e ".[dev]"` — success.
+2. Full suite: 263 passed, 100% coverage.
+3. Fresh mutation run (cache wiped): 592 / 563 / 29 — exact reproduction of
+   the reported table, including per-module splits (joint 131/126/5,
+   population 257/250/7, queue 204/187/17).
+4. Survivor-to-documentation cross-check: the 29 surviving mutant names
+   match the MUTATION_NOTES.md tables exactly, one-for-one.
+5. Equivalence-claim verification, per survivor class:
+   a. numpy/scipy semantics (9 claims) verified empirically:
+      flags.writeable = None coerces to False; np.cov(rowvar=None) ==
+      rowvar=False; np.cov(ddof=None) == ddof=1 (default) == ddof dropped;
+      np.empty / np.zeros / np.array(list-of-floats, dtype=None) all
+      default to float64; None assigned into a bool array becomes False;
+      Generator.choice(replace=None) == replace=False; choice(remaining,
+      size=0) == [] including the empty-population case.
+   b. queue.py logic mutants (15 claims) verified by differential
+      brute-force: each mutation applied to an in-memory copy of the
+      source and compared against the original over 400 randomized
+      contract-valid scenarios (A in 2..4 per config invariant, mixed
+      d2/None, mixed tick_flagged, budgets 0..6, empty populations,
+      empty candidate sets). Result: EQUIVALENT on all 400 cases for
+      every one of the 15 mutations (96, 129, 176, 185, 180, 46, 48, 56,
+      58, 23, 25, 41, 43, 122, 124, 125, 126 — 17 name variants, 15
+      distinct edits).
+   c. joint.py 13/15 (flags.writeable = True): verified that
+      MonitorState.__post_init__ unconditionally freezes mu/M2 — arrays
+      passed in writeable come out read-only regardless of the mutated
+      line.
+   d. joint.py 86 (D2 >= threshold): measure-zero boundary; the existing
+      predicate tests pin flagged == (D2 > threshold) for all
+      non-boundary values. Standard, accepted justification; exact
+      float equality with chi2.ppf is not constructible in practice.
+   e. score_sessions 22/24: the isinstance scalar arm is unreachable
+      under the DS-005 (S, A) contract and serves as the mypy --strict
+      union-narrowing guard (removing it breaks mypy — confirmed).
+6. No-false-kill audit: the --no-cov pytest_add_cli_args neutralizes the
+   pytest-cov fail_under gate that would otherwise mark every mutant
+   killed on partial covering-test runs; the hypothesis profile in
+   tests/conftest.py activates only when mutmut is imported (inert under
+   normal pytest) and suppresses only the differing_executors health
+   check, which is a false positive of mutmut's multi-session in-process
+   runner. Spec edge case "equivalent mutants justified, not killed
+   falsely" — satisfied.
+7. No-weakened-tests audit: the F-013 commit's test diffs contain only
+   additions, the exact-error-message match= strengthening, and the
+   welford-oracle tolerance fix. The tolerance change (fixed atol ->
+   scale-aware) did not degrade mutation detection: all 15
+   x_welford_update mutants remain killed in the fresh run, as do all
+   d_squared mutants.
+8. Historical narrative cross-check: all 29 final survivors were among
+   the original 97 (set difference empty); the hardening therefore
+   killed 68 of the original 97 — see ADVISORY A1.
+
+================================================================================
+FINDINGS
+================================================================================
+ADVISORY (A1) — Factual error in MUTATION_NOTES.md narrative
+  File: MUTATION_NOTES.md, "Results (final run)" section
+  The narrative states the first hardening pass "killed 65 of the original
+  97 survivors". The correct number is 68: the original run had 97
+  survivors, the final run has 29, all 29 were original survivors
+  (verified by set comparison), hence 97 - 29 = 68 newly killed. The
+  results table itself (592/563/29 and per-module splits) is correct.
+
+ADVISORY (A2) — Exclusion table completeness
+  File: MUTATION_NOTES.md, "Excluded modules — rationale"
+  src/agent_monitor/__init__.py is not listed. It is a pure re-export
+  module (imports + __all__ only, zero logic), so the omission is
+  immaterial to the mutation scope, but AC2's "all other modules" is
+  strictly incomplete without it.
+
+ADVISORY (A3) — Dev-workflow gating is documentation-only
+  test_requirements asks for "mutmut run gated in CI or dev workflow".
+  The documented command sequence (including the rm -rf mutants
+  cache-invalidation caveat) satisfies the "dev workflow" arm, but the
+  repository has no CI or task runner to enforce it. Recommend a CI job
+  or Makefile target wrapping `rm -rf mutants && mutmut run` as part of
+  F-014 (release hygiene), which owns repository-wide CI gating.
+
+No BLOCKING findings. No ESCALATIONS. All equivalence justifications were
+independently confirmed; none of the 29 survivors represents a test gap
+in core numerical logic.
+
+================================================================================
+REQUIRED ACTIONS (mechanical, Actor)
+================================================================================
+1. MUTATION_NOTES.md: correct "killed 65 of the original 97 survivors"
+   to "killed 68 of the original 97 survivors".
+2. MUTATION_NOTES.md: add a row for `__init__.py` (pure re-export module,
+   zero logic) to the exclusion table.
+3. (Optional, defer to F-014) Add CI job or Makefile target for the
+   mutation run.
+
+Once actions 1-2 are applied, this verdict may be treated as PASS without
+a further review round: neither action affects any acceptance criterion,
+test, or production code.
+
+================================================================================
+VERDICT RATIONALE
+================================================================================
+All acceptance criteria are MET with independently reproduced evidence:
+the mutation score is 95.1% (>= 80% threshold), every one of the 29
+surviving mutants is documented and its equivalence justification was
+verified empirically or by differential brute-force, and the exclusion
+list covers the spec-named modules with rationale. The verdict is
+CONDITIONAL_PASS rather than PASS solely because the deliverable's own
+report contains one incorrect statistic (A1) and one missing table row
+(A2) — both one-line documentation fixes.

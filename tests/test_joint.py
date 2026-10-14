@@ -1,6 +1,8 @@
 # ruff: noqa: N806, N803
 """Tests for joint.py — Welford update, Mahalanobis distance, joint detector."""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -190,7 +192,13 @@ class TestUpdateJoint:
         for _ in range(2):
             state, _ = update_joint(state, np.array([0.0, 0.0]))
         # 3rd tick: n=3 >= min_warm, covariance is singular -> LinAlgError
-        with pytest.raises(np.linalg.LinAlgError):
+        with pytest.raises(
+            np.linalg.LinAlgError,
+            match=(
+                r"Ridge-regularized covariance is singular \(ridge=0\.0\); "
+                r"check for degenerate or constant axes"
+            ),
+        ):
             state, _ = update_joint(state, np.array([0.0, 0.0]))
 
 
@@ -227,9 +235,18 @@ class TestHypothesisWelford:
         for row in data_arr:
             n, mu, M2 = welford_update(n, mu, M2, row)
         if n >= 2:
+            expected_mu = np.mean(data_arr, axis=0)
             expected_scatter = np.cov(data_arr, rowvar=False, ddof=1) * (n - 1)
-            np.testing.assert_allclose(mu, np.mean(data_arr, axis=0), atol=1e-9)
-            np.testing.assert_allclose(M2, expected_scatter, atol=1e-6)
+            # Scale-aware tolerances: online vs two-pass differ by floating-point
+            # cancellation noise proportional to the data/scatter magnitude, so a
+            # fixed atol would flake on large-magnitude inputs.
+            np.testing.assert_allclose(
+                mu, expected_mu, rtol=1e-9, atol=1e-9 * max(1.0, float(np.abs(expected_mu).max()))
+            )
+            np.testing.assert_allclose(
+                M2, expected_scatter,
+                rtol=1e-9, atol=1e-9 * max(1.0, float(np.abs(expected_scatter).max())),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -284,3 +301,70 @@ class TestHypothesisJoint:
             state, result = update_joint(state, np.array(row))
             if result.D2 is not None:
                 assert result.flagged == (result.D2 > result.threshold)
+
+
+# ---------------------------------------------------------------------------
+# Mutation hardening (F-013): exact-oracle, read-only, and field-preservation
+# ---------------------------------------------------------------------------
+
+
+class TestMutationHardening:
+    def test_d_squared_nonzero_mu(self) -> None:
+        """d2 uses (S - mu): an asymmetric mean must change the distance."""
+        S = np.array([2.0, 0.0])
+        mu = np.array([1.0, 0.0])
+        sigma_inv = np.eye(2)
+        # (2-1)^2 = 1.0; the (S + mu) variant would give 9.0
+        assert d_squared(S, mu, sigma_inv) == pytest.approx(1.0)
+
+    def test_update_joint_outputs_read_only(self) -> None:
+        state = _make_fresh_state(min_warm=5)
+        state, _result = update_joint(state, np.array([1.0, 2.0, 3.0]))
+        assert state.mu.flags.writeable is False
+        assert state.M2.flags.writeable is False
+
+    def test_update_joint_preserves_unrelated_state(self) -> None:
+        state = _make_fresh_state(min_warm=5)
+        theta = np.array([1.0, 2.0, 3.0])
+        theta.flags.writeable = False
+        state = replace(state, theta=theta)
+        state2, _result = update_joint(state, np.array([0.5, 0.5, 0.5]))
+        assert state2.theta is state.theta
+        assert state2.tick == state.tick
+        assert state2.metric_buf is state.metric_buf
+        assert state2.axis_buf is state.axis_buf
+        assert state2.population is state.population
+
+    def test_d2_matches_independent_oracle(self) -> None:
+        """Post-warm-up D2 equals an independent numpy oracle to 1e-9 relative.
+
+        Pins the Sigma = M2/(n-1) + ridge*I denominator exactly.
+        """
+        state = _make_fresh_state(min_warm=10, ridge=1e-3)
+        rng = np.random.default_rng(123)
+        seq = [rng.normal(0.0, 1.0, size=3) for _ in range(25)]
+        for S in seq:
+            state, result = update_joint(state, S)
+        data = np.array(seq)
+        mu_o = data.mean(axis=0)
+        Sigma_o = np.cov(data, rowvar=False, ddof=1) + 1e-3 * np.eye(3)
+        diff = seq[-1] - mu_o
+        D2_o = float(diff @ np.linalg.inv(Sigma_o) @ diff)
+        assert result.D2 is not None
+        assert result.D2 == pytest.approx(D2_o, rel=1e-9)
+
+    def test_result_n_and_notes(self) -> None:
+        """JointResult.n counts updates; notes distinguish flagged from silent."""
+        state = _make_fresh_state(min_warm=5)
+        # Identical vectors: mu == S exactly, so D2 == 0 -> silent
+        for _ in range(20):
+            state, result = update_joint(state, np.array([1.0, 1.0, 1.0]))
+        assert result.n == 20
+        assert result.D2 == pytest.approx(0.0, abs=1e-9)
+        assert not result.flagged
+        assert result.note == "ok"
+        # Single-point spike: D2 ~ (n-1)^2/n = 19.05 > chi2_3(0.99) = 11.34
+        state, result = update_joint(state, np.array([50.0, 50.0, 50.0]))
+        assert result.n == 21
+        assert result.flagged
+        assert result.note == "joint anomaly detected"

@@ -203,6 +203,8 @@ def score_sessions(
 
     scores: list[SessionScore] = []
     for i, sid in enumerate(sessions.ids):
+        # isinstance narrows d_squared's float | ndarray union for mypy;
+        # the scalar arm is defensive (sessions.F is (S, A) per DS-005)
         d2 = float(d2_vals[i]) if isinstance(d2_vals, np.ndarray) else float(d2_vals)
         p_value = float(chi2.sf(d2, df=A))
         scores.append(SessionScore(id=sid, d2=d2, p_value=p_value))
