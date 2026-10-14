@@ -7,6 +7,8 @@ critical math modules only. All other modules are excluded by user directive
 ## How to run
 
 ```bash
+make mutate                   # dev-workflow gate (Makefile): fresh run
+# or by hand:
 uv pip install -e ".[dev]"   # mutmut>=3 is a dev extra
 rm -rf mutants               # clear cached verdicts (see caveat below)
 mutmut run                   # ~1-2 min; prints a live progress bar
@@ -47,7 +49,7 @@ pytest runs keep all health checks active.
 | queue.py       | 204     | 187    | 17                          |
 | **Total**      | **592** | **563 (95.1%)** | **29 (all justified)** |
 
-The first hardening pass killed 65 of the original 97 survivors with exact
+The first hardening pass killed 68 of the original 97 survivors with exact
 boundary (n-1/n/n+1), dtype-contract, state-preservation, exact-selection,
 and independent-numpy-oracle assertions; the remaining 29 are equivalent
 mutants, justified below.
@@ -110,3 +112,4 @@ each feature's `mutation_testing.rationale_if_disabled` in `plans/v0_spec.json`)
 | `advance.py` | Thin orchestration; covered by reference parity and the [T1] streaming-vs-batch-replay property (F-006). |
 | `checkpoint.py` | I/O edge; mutation testing on filesystem round-trips is low-value and flaky (F-010). |
 | `monitor.py` | Stateful facade that delegates to the pure core; contains no detection logic (F-011). |
+| `__init__.py` | Pure re-export module (imports + `__all__` only); zero logic to mutate. |

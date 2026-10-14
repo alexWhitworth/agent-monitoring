@@ -899,7 +899,7 @@
       "description": "Run mutmut on the critical modules only (joint.py, population.py, queue.py); all surviving mutants killed or explicitly justified in MUTATION_NOTES.md. Mutation testing explicitly NOT run on other modules per user directive.",
       "phase": "5b",
       "priority": 13,
-      "status": "pending",
+      "status": "complete",
       "layer": "python",
       "dependencies": ["F-012"],
       "linked_schemas": [],
