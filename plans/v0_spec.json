@@ -1,6 +1,6 @@
 {
-  "spec_version": "1.0.0",
-  "generated_at": "2026-10-09T10:34:45-07:00",
+  "spec_version": "1.2.0",
+  "generated_at": "2026-10-13T21:01:29-07:00",
   "project": {
     "name": "agent_monitor",
     "description": "Python library implementing the Adaptive Multi-Dimensional Monitoring (AMDM) algorithm (Shukla 2025, arXiv:2509.00115) for agentic AI systems: Tier 1 streaming per-axis EWMA + joint Mahalanobis anomaly detection over aggregate metric matrices, and Tier 2 per-session Mahalanobis scoring with winsorized population estimates and stratified human-review queue allocation.",
@@ -791,7 +791,7 @@
       "status": "complete",
       "judge_verdict": "CONDITIONAL_PASS",
       "judge_round": 1,
-      "judge_notes": "3 BLOCKING mypy errors (arg-type, import-untyped, no-any-return) + 8 advisory ruff issues. All 4 ACs MET. mypy fixes required before F-014 release hygiene.",
+      "judge_notes": "3 BLOCKING mypy errors (arg-type, import-untyped, no-any-return) + 8 advisory ruff issues. All 4 ACs MET. mypy fixes required before F-015 release hygiene.",
       "layer": "python",
       "dependencies": ["F-001", "F-004", "F-005", "F-007"],
       "linked_schemas": ["DS-003", "DS-011", "DS-012"],
@@ -828,7 +828,7 @@
       "status": "complete",
       "judge_verdict": "CONDITIONAL_PASS",
       "judge_round": 1,
-      "judge_notes": "1 BLOCKING (unused type:ignore) + 2 ADVISORY. README deferred to F-014.",
+      "judge_notes": "1 BLOCKING (unused type:ignore) + 2 ADVISORY. README deferred to F-015.",
       "layer": "python",
       "dependencies": ["F-006", "F-007", "F-008", "F-009", "F-010"],
       "linked_schemas": ["DS-003"],
@@ -924,20 +924,61 @@
     },
     {
       "id": "F-014",
-      "name": "Release hygiene",
-      "description": "README (streaming + Airflow usage, paper-default parameter table, deferred-scope notes), coverage gate >= 85%, ruff/mypy clean, uv lockfile, .gitignore for transient artifacts.",
+      "name": "Anomaly-type DGP catalog",
+      "description": "tests/dgps.py: catalog of six seeded, pure data-generating processes (DGP-01..DGP-06) mapped to the Schmidl et al. (2022) anomaly taxonomy (VLDB 15(9), DOI 10.14778/3538598.3538602): H0 iid, point, multivariate-coordinated, ramp (characterization only), subsequence burst, Tier-2 population contamination. Each DGP emits full-lifecycle TickMetrics/SessionFeatures streams (A >= 2 axes) with declared expected-flag semantics. Additive test infrastructure: completed soak/parity tests are NOT reopened; the catalog feeds new per-type semantics tests.",
       "phase": "5c",
       "priority": 14,
       "status": "planned",
       "layer": "python",
-      "dependencies": ["F-011", "F-012", "F-013"],
+      "dependencies": ["F-001", "F-006", "F-007"],
+      "linked_schemas": ["DS-001", "DS-004", "DS-005"],
+      "linked_apis": ["API-009", "API-010", "API-013"],
+      "invariants": {
+        "composition_scope": "INTEGRATION",
+        "temporal_bounds": "[G1] Stream generation is deterministic and causal: tick t is a pure function of (dgp_id, seed, t); same (dgp_id, seed, length) yields byte-identical streams.",
+        "accounting_oracle": "[G2] Realized flags over the full pipeline (advance -> absorb/score) match each DGP's declared per-type semantics: DGP-02/05 flag both layers at onset with silent recovery as EWMA re-absorbs; DGP-03 joint_flag and not any_axis_flag during the shift window; DGP-06 winsor caps stable with no masking of a shifted candidate.",
+        "plausibility_range": "All generated values finite float64 with shapes conforming to config (A >= 2, ragged-safe M_a per axis); DGP-01 realizes the [P1]/[P3] H0 flag-rate bands; DGP-03 per-axis marginal shift stays within k so only the joint layer can fire.",
+        "realism_requirements": "[R1]-consistent: streams span warm-up -> steady state -> anomaly -> recovery at realistic tick counts (>= 60 baseline ticks), not single-shot mocks."
+      },
+      "performance_requirements": {"complexity_budget": "O(A * M * T) per stream; test-only, seconds wall time"},
+      "property_based_testing": {"enabled": true, "tool": "hypothesis", "strategies": ["H0 flag-rate bounds across seeds (DGP-01)", "determinism: same (dgp_id, seed, T) -> byte-identical stream"]},
+      "mutation_testing": {"enabled": false, "rationale_if_disabled": "Test-only infrastructure; no production code to mutate."},
+      "acceptance_criteria": [
+        "tests/dgps.py exports six seeded pure DGP generators (DGP-01..06) with declared expected-flag semantics mapped to the taxonomy",
+        "[G2] DGP-02 (point, x20 sigma, 1 tick) and DGP-05 (subsequence, +3 sigma, 3 ticks): any_axis_flag and joint_flag at onset; silent recovery after EWMA re-absorption",
+        "[G2] DGP-03 (multivariate +1.5 sigma coordinated): joint_flag and not any_axis_flag during the shift window; each marginal within k",
+        "[G2] DGP-06 (Tier-2 contamination, 0.5% rows inside the p=0.99 two-sided clip tail): winsor caps stable vs clean baseline, [P4] raw-vs-cap ordering preserved, shifted candidate not masked",
+        "[G3] DGP-04 (ramp, +0.05 sigma/tick): characterization, not detection: EWMA absorption asserted as documented behavior (R-04); no flag assertion",
+        "[G1] identical (dgp_id, seed, length) yields byte-identical streams; differing seeds differ",
+        "DGP-01 over >= 10 seeds realizes [P1]/[P3]: Tier 1 flag rate in [0.5*alpha, 2*alpha] and Tier 2 flag rate in [alpha, 2*alpha] post-warm-up",
+        "uv run ruff check . clean and mypy --strict clean on tests/dgps.py; seasonal/contextual DGP documented as a v1 realism gate, not v0 pass/fail"
+      ],
+      "test_requirements": [
+        "tests/test_dgps.py (unit + hypothesis: per-DGP declared semantics, H0 bounds, determinism, contamination stability)"
+      ],
+      "edge_cases": [
+        "seasonal/contextual DGP excluded from v0 pass/fail: periodicity under EWMA + rolling z-scores is a calibration question, deferred to v1 with real data",
+        "streams shorter than w / min_warm produce documented warm-up-only semantics, not errors",
+        "DGP-06 contamination fraction vs winsor tail: 0.5% sits inside the p=0.99 two-sided clip tail; 5% would sit above q_0.99 and defeat the cap (documented choice)"
+      ],
+      "clarification_needed": false
+    },
+    {
+      "id": "F-015",
+      "name": "Release hygiene",
+      "description": "Lean README (minimal quick-start, paper-default parameter table, deferred-scope notes, links into examples/) with detailed runnable streaming + Airflow examples living in examples/*.py scripts (synthetic data, public API only). Coverage gate >= 85%, ruff/mypy clean, uv lockfile, .gitignore for transient artifacts.",
+      "phase": "5d",
+      "priority": 15,
+      "status": "planned",
+      "layer": "python",
+      "dependencies": ["F-011", "F-012", "F-013", "F-014"],
       "linked_schemas": [],
       "linked_apis": [],
       "invariants": {
         "composition_scope": "INTEGRATION",
         "temporal_bounds": "N/A (release hygiene).",
-        "accounting_oracle": "pytest-cov fail_under = 85 enforced; ruff and mypy exit code 0.",
-        "plausibility_range": "README documents all 10 plan assumptions and the deferred-scope items (calibration v1, plotnine v2, partial axes v1+).",
+        "accounting_oracle": "pytest-cov fail_under = 85 enforced; ruff and mypy exit code 0; every examples/*.py smoke-runs to exit 0.",
+        "plausibility_range": "README documents all 10 plan assumptions and the deferred-scope items (calibration v1, plotnine v2, partial axes v1+) with NO detailed examples inline; every detailed example lives in examples/ and is linked from README.",
         "realism_requirements": null
       },
       "performance_requirements": {"complexity_budget": "N/A"},
@@ -946,11 +987,12 @@
       "acceptance_criteria": [
         "uv run pytest exits 0 with total coverage >= 85% (fail_under gate active)",
         "uv run ruff check . and uv run mypy src/ both exit 0",
-        "README contains runnable streaming and Airflow examples plus the paper-default parameter table and deferred-scope notes",
+        "README contains a minimal quick-start (install + minimal usage), a brief Airflow-style workflow outline (F-011 AC), the paper-default parameter table, deferred-scope notes, and links into examples/; NO detailed examples inline in README",
+        "examples/ holds the detailed runnable examples (e.g. examples/streaming_service.py, examples/airflow_batch.py): each exits 0 via uv run python examples/<name>.py on synthetic data, using only the public API (agent_monitor.Monitor)",
         "uv.lock committed; .coverage, coverage.xml, htmlcov/, .pytest_cache/ in .gitignore"
       ],
-      "test_requirements": ["CI/dev commands: uv run pytest, uv run ruff check ., uv run mypy src/"],
-      "edge_cases": ["coverage gate vs. I/O-bound checkpoint module (use # pragma: no cover on untestable env branches only)"],
+      "test_requirements": ["CI/dev commands: uv run pytest, uv run ruff check ., uv run mypy src/", "example smoke check: uv run python examples/<name>.py exits 0 for every example script (examples excluded from coverage source = src/agent_monitor)"],
+      "edge_cases": ["coverage gate vs. I/O-bound checkpoint module (use # pragma: no cover on untestable env branches only)", "examples excluded from coverage accounting (source = src/agent_monitor); ruff still lints them", "example drift vs. public API (examples import only the agent_monitor public surface)"],
       "clarification_needed": false
     }
   ],
@@ -981,14 +1023,14 @@
       "description": "Alert storms / flag thrashing under marginal drift degrade operator trust.",
       "severity": "medium",
       "mitigation": "EWMA theta absorbs regime shifts by design; k defaults intentionally strict (chi2_A(0.99)); true fix = sensitivity calibration, explicitly deferred to v1 with real data (TODO documented).",
-      "linked_features": ["F-004", "F-005", "F-012"]
+      "linked_features": ["F-004", "F-005", "F-012", "F-014"]
     },
     {
       "id": "R-05",
       "description": "Population contamination: anomalous sessions absorbed into the population shift mu and inflate Sigma (masking effect on future detection).",
       "severity": "medium",
       "mitigation": "Two-sided winsorization (winsor_pct=0.99, quantiles over window*winsor_k lookback, stable caps + responsive covariance); candidates never clipped [P4]; residual coordinated-drift exposure documented (Assumption 10); flagged ticks recorded for forensics.",
-      "linked_features": ["F-007", "F-008"]
+      "linked_features": ["F-007", "F-008", "F-014"]
     },
     {
       "id": "R-06",
@@ -1068,8 +1110,8 @@
     {
       "phase": 5,
       "name": "Hardening & release",
-      "description": "Property-based soak tests, restricted mutation testing, release hygiene (README, coverage gate, lint/type clean).",
-      "feature_ids": ["F-012", "F-013", "F-014"]
+      "description": "Property-based soak tests, restricted mutation testing, anomaly-type DGP catalog (tests/dgps.py), release hygiene (lean README + examples/, coverage gate, lint/type clean).",
+      "feature_ids": ["F-012", "F-013", "F-014", "F-015"]
     }
   ]
 }
