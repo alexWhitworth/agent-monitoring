@@ -1,4 +1,3 @@
-# ruff: noqa: N806
 """Top-level pure orchestration for Tier 1 AMDM detection.
 
 API-009: advance(state, tick) -> (state, TickResult)

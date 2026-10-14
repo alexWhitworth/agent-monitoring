@@ -1,4 +1,3 @@
-# ruff: noqa: N806
 """Population window with dedup, eviction, winsorization, and stats.
 
 API-010: absorb(state, sessions, tick_flagged) -> state

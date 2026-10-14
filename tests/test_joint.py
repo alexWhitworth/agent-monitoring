@@ -1,4 +1,3 @@
-# ruff: noqa: N806, N803
 """Tests for joint.py — Welford update, Mahalanobis distance, joint detector."""
 
 from dataclasses import replace

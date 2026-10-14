@@ -26,6 +26,7 @@ from agent_monitor.types import (
 __all__ = [
     "AxisResult",
     "JointResult",
+    "Monitor",
     "MonitorConfig",
     "MonitorState",
     "QueueConfig",
@@ -36,7 +37,6 @@ __all__ = [
     "TickMetrics",
     "TickResult",
     "build_review_queue",
-    "Monitor",
     "config_from_json",
     "config_to_json",
     "load_checkpoint",

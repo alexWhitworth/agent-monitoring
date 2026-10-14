@@ -1,4 +1,3 @@
-# ruff: noqa: N806
 """Tests for session scoring (F-008) — batch-vs-loop equivalence, [P4] ordering,
 warm-up gating, and NaN/Inf-free outputs.
 
@@ -17,8 +16,12 @@ from scipy.stats import chi2  # type: ignore[import-untyped]
 from agent_monitor.config import validate_monitor_config
 from agent_monitor.joint import d_squared
 from agent_monitor.population import absorb, population_stats, score_sessions, winsor_caps
-from agent_monitor.types import MonitorConfig, MonitorState, SessionFeatures, SessionScore, SessionWindow
-
+from agent_monitor.types import (
+    MonitorConfig,
+    MonitorState,
+    SessionFeatures,
+    SessionWindow,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers

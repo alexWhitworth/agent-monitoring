@@ -1,4 +1,3 @@
-# ruff: noqa: N806
 """Integration tests for checkpoint persistence (F-010).
 
 [D2] save -> load round-trip: arrays byte-equal, writeable=False,
@@ -151,7 +150,7 @@ class TestD2RoundTrip:
         assert t1.any_axis_flag == t2.any_axis_flag
         assert t1.joint_flag == t2.joint_flag
         # Axis results
-        for a1, a2 in zip(t1.axis_results, t2.axis_results):
+        for a1, a2 in zip(t1.axis_results, t2.axis_results, strict=True):
             assert a1.axis == a2.axis
             assert a1.flagged == a2.flagged
             if a1.S_A is not None and a2.S_A is not None:
@@ -191,7 +190,9 @@ class TestD2RoundTrip:
         # Verify population
         np.testing.assert_array_equal(restored.population.ids, state.population.ids)
         np.testing.assert_array_equal(restored.population.features, state.population.features)
-        np.testing.assert_array_equal(restored.population.tick_flagged, state.population.tick_flagged)
+        np.testing.assert_array_equal(
+            restored.population.tick_flagged, state.population.tick_flagged
+        )
         assert not restored.population.features.flags.writeable
 
         # Advance both

@@ -1,4 +1,3 @@
-# ruff: noqa: N806
 """Tests for advance.py — Tier 1 orchestration and reference parity."""
 
 import numpy as np

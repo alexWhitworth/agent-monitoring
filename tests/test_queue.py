@@ -1,4 +1,3 @@
-# ruff: noqa: N806
 """Tests for review queue stratification (F-009) — five-stratum allocation,
 disjointness, shortfall cascade, determinism, and edge cases.
 
@@ -8,7 +7,6 @@ API-014: build_review_queue(tick_result, session_scores, state, qcfg) -> ReviewQ
 from __future__ import annotations
 
 import numpy as np
-import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -26,7 +24,6 @@ from agent_monitor.types import (
     SessionWindow,
     TickResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -304,7 +301,7 @@ class TestShortfallCascade:
         tr = _make_tick_result()
         qcfg = QueueConfig(top_k=1, flagged=1, per_axis=1, uniform=2, seed=0)
         plan = build_review_queue(tr, scores, state, qcfg)
-        # top_k=1 fills, flagged=1 fills, per_axis gets 1+0=1 (/2 = 0 each, but with cascade becomes 1)
+        # top_k=1 fills, flagged=1 fills, per_axis /2 = 0 each, but cascade gives 1
         # Actually: top_k gets 1 (d2=4), flagged gets 1 (d2=3), cascade=0 from both
         # per_axis=1, floor(1/2)=0 -> 0 selected; cascade=1 to uniform
         # uniform=2+1=3, selects 3 from remaining 3
@@ -604,7 +601,9 @@ class TestHypothesisStrata:
             for i, sid in enumerate(ids)
         )
         tr = _make_tick_result()
-        qcfg = QueueConfig(top_k=top_k, flagged=flagged, per_axis=per_axis, uniform=uniform, seed=seed)
+        qcfg = QueueConfig(
+            top_k=top_k, flagged=flagged, per_axis=per_axis, uniform=uniform, seed=seed
+        )
         plan = build_review_queue(tr, scores, state, qcfg)
 
         # [A1] Strata disjoint
@@ -692,7 +691,9 @@ class TestHypothesisDeterminism:
             for i, sid in enumerate(ids)
         )
         tr = _make_tick_result()
-        qcfg = QueueConfig(top_k=top_k, flagged=flagged, per_axis=per_axis, uniform=uniform, seed=seed)
+        qcfg = QueueConfig(
+            top_k=top_k, flagged=flagged, per_axis=per_axis, uniform=uniform, seed=seed
+        )
 
         plan1 = build_review_queue(tr, scores, state, qcfg)
         plan2 = build_review_queue(tr, scores, state, qcfg)

@@ -1,4 +1,3 @@
-# ruff: noqa: N806
 """Parquet checkpoint persistence (F-010, APIs 015-016).
 
 Atomic temp-dir + rename save; data-only load (no pickle, no code execution).
@@ -10,7 +9,6 @@ from __future__ import annotations
 __all__ = ["load_checkpoint", "save_checkpoint"]
 
 import io
-import json
 import os
 import shutil
 import tempfile
@@ -22,7 +20,6 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 
 from agent_monitor.config import config_from_json, config_to_json
 from agent_monitor.types import MonitorConfig, MonitorState, SessionWindow
-
 
 # ---------------------------------------------------------------------------
 # Schema & serialization helpers
@@ -128,7 +125,8 @@ def _write_state_parquet(state: MonitorState, filepath: Path) -> None:
     }
 
     schema = pa.schema(STATE_COLUMNS)
-    table = pa.table({col: pa.array([row[col]], type=dt) for col, dt in STATE_COLUMNS}, schema=schema)
+    columns = {col: pa.array([row[col]], type=dt) for col, dt in STATE_COLUMNS}
+    table = pa.table(columns, schema=schema)
     pq.write_table(table, str(filepath), compression="zstd")
 
 
@@ -197,7 +195,9 @@ def load_checkpoint(path: Path) -> MonitorState:
 
     state_table = pq.read_table(str(state_file))
     if len(state_table) != 1:
-        raise ValueError(f"state.parquet must have exactly 1 row, got {len(state_table)}")  # pragma: no cover
+        raise ValueError(  # pragma: no cover
+            f"state.parquet must have exactly 1 row, got {len(state_table)}"
+        )
 
     row = state_table.to_pydict()
 
@@ -221,7 +221,9 @@ def load_checkpoint(path: Path) -> MonitorState:
     M2 = _ndarray_from_bytes(row["M2_binary"][0])
 
     # Validate array shapes against config
-    _validate_state_arrays(config, tick, metric_buf, metric_count, theta, axis_buf, axis_count, n_joint, mu, M2)
+    _validate_state_arrays(
+        config, tick, metric_buf, metric_count, theta, axis_buf, axis_count, n_joint, mu, M2
+    )
     # Type narrowing: _validate_state_arrays ensures non-None for required fields
     assert metric_buf is not None
     assert metric_count is not None
@@ -276,7 +278,9 @@ def _validate_state_arrays(
             f"{metric_count.shape if metric_count is not None else None}"
         )
     if theta is not None and theta.shape != (A,):
-        raise ValueError(f"theta shape mismatch: expected {(A,)}, got {theta.shape}")  # pragma: no cover
+        raise ValueError(  # pragma: no cover
+            f"theta shape mismatch: expected {(A,)}, got {theta.shape}"
+        )
     if axis_buf is None or axis_buf.shape != (A, w):
         raise ValueError(  # pragma: no cover
             f"axis_buf shape mismatch: expected {(A, w)}, got "
@@ -288,9 +292,13 @@ def _validate_state_arrays(
             f"{axis_count.shape if axis_count is not None else None}"
         )
     if mu is None or mu.shape != (A,):
-        raise ValueError(f"mu shape mismatch: expected {(A,)}, got {mu.shape if mu is not None else None}")  # pragma: no cover
+        raise ValueError(  # pragma: no cover
+            f"mu shape mismatch: expected {(A,)}, got {mu.shape if mu is not None else None}"
+        )
     if M2 is None or M2.shape != (A, A):
-        raise ValueError(f"M2 shape mismatch: expected {(A, A)}, got {M2.shape if M2 is not None else None}")  # pragma: no cover
+        raise ValueError(  # pragma: no cover
+            f"M2 shape mismatch: expected {(A, A)}, got {M2.shape if M2 is not None else None}"
+        )
 
 
 def _load_population_parquet(filepath: Path, config: MonitorConfig) -> SessionWindow:

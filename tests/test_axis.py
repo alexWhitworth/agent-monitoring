@@ -28,8 +28,8 @@ def _make_fresh_state(
             **overrides,  # type: ignore[arg-type]
         )
     )
-    A = len(cfg.axis_names)  # noqa: N806
-    M_max = max(len(m) for m in cfg.metric_names)  # noqa: N806
+    A = len(cfg.axis_names)
+    M_max = max(len(m) for m in cfg.metric_names)
     w = cfg.window
 
     pop = SessionWindow(
