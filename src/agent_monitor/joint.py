@@ -1,4 +1,3 @@
-# ruff: noqa: N806, N803
 """Joint Mahalanobis/chi-square anomaly detector (Steps 5-6).
 
 API-006: welford_update(n, mu, M2, S) -> (n, mu, M2)

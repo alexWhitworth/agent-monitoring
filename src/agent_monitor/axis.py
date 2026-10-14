@@ -36,7 +36,7 @@ def _rolling_mean_std(buf: np.ndarray, count: int) -> tuple[float, float]:
 def update_axis(
     state: MonitorState,
     a: int,
-    X_a: Sequence[float],  # noqa: N803
+    X_a: Sequence[float],
     agg_fn: Callable[[Sequence[float]], float],
 ) -> tuple[MonitorState, AxisResult]:
     """Steps 2-4 for one axis: z-score metrics, aggregate, EWMA, flag.
@@ -56,7 +56,7 @@ def update_axis(
     """
     cfg = state.config
     axis_name = cfg.axis_names[a]
-    M_a = len(cfg.metric_names[a])  # noqa: N806
+    M_a = len(cfg.metric_names[a])
 
     if len(X_a) != M_a:
         raise ValueError(
@@ -83,9 +83,9 @@ def update_axis(
             zs.append(z)
 
     # Step 2: S_A = agg_fn(valid z-scores); None if no valid z-scores
-    S_A: float | None = None  # noqa: N806
+    S_A: float | None = None
     if zs:
-        S_A = agg_fn(zs)  # noqa: N806
+        S_A = agg_fn(zs)
 
     # Update state's per-axis buffers
     axis_buf = np.copy(state.axis_buf[a])
@@ -94,7 +94,7 @@ def update_axis(
 
     note = "ok"
     flagged = False
-    sigma_S: float | None = None  # noqa: N806
+    sigma_S: float | None = None
     deviation: float | None = None
     threshold: float | None = None
     theta_out: float | None = theta_val
@@ -115,7 +115,7 @@ def update_axis(
 
         # Step 4: adaptive threshold test
         if axis_count >= 2:
-            _mu_S, sigma_S = _rolling_mean_std(axis_buf, axis_count)  # noqa: N806
+            _mu_S, sigma_S = _rolling_mean_std(axis_buf, axis_count)
             if sigma_S > 1e-10:
                 deviation = abs(S_A - theta_out)
                 threshold = cfg.k * sigma_S  # type: ignore[operator] # k is resolved

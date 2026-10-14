@@ -1,4 +1,3 @@
-# ruff: noqa: N806
 """Tests for population.py — absorb, winsor_caps, population_stats, score_sessions."""
 
 from dataclasses import replace

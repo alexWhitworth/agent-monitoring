@@ -1,4 +1,3 @@
-# ruff: noqa: N806
 """Review queue stratification (F-009, API-014).
 
 Five-stratum allocation from current-tick candidates in priority order

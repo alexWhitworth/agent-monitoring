@@ -11,18 +11,18 @@ Invariants:
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import numpy as np
 import pytest
-from hypothesis import assume, given, settings
+from hypothesis import given, settings
 from hypothesis import strategies as st
 from scipy.stats import chi2  # type: ignore[import-untyped]
 
 from agent_monitor.advance import advance
 from agent_monitor.config import validate_monitor_config
-from agent_monitor.population import absorb, score_sessions, winsor_caps
+from agent_monitor.population import absorb, score_sessions
 from agent_monitor.types import (
-    AxisResult,
-    JointResult,
     MonitorConfig,
     MonitorState,
     SessionFeatures,
@@ -30,7 +30,6 @@ from agent_monitor.types import (
     TickMetrics,
     TickResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -117,10 +116,6 @@ class TestT1StreamingBatch:
     @settings(max_examples=50)
     def test_streaming_equals_batch_over_prefixes(self, ticks_data: list[list[float]]) -> None:
         """[T1] Streaming advance == batch recompute over prefixes."""
-        # Use variable metric counts across ticks
-        metrics_per_tick = [len(t) for t in ticks_data]
-        min_metrics = min(metrics_per_tick)
-
         config = _make_config(
             axis_names=("a", "b"),
             metric_names=(("m",), ("m",)),
@@ -215,7 +210,7 @@ class TestP1Tier1H0:
         # After warm-up should have >= 10^4 ticks
         assert post_warm_ticks >= 10_000
 
-        post_warm_d2 = [d for d in d2_values[-post_warm_ticks:]]
+        post_warm_d2 = d2_values[-post_warm_ticks:]
         mean_d2 = np.mean(post_warm_d2)
         flag_rate = post_warm_flags / post_warm_ticks
 
@@ -236,7 +231,7 @@ class TestP1Tier1H0:
 
 
 class TestP2NoNanInf:
-    ADVERSARIAL_INPUTS = [
+    ADVERSARIAL_INPUTS: ClassVar[list[tuple[str, float, float]]] = [
         # (desc, x_a, x_b) — single metric per axis
         ("zeros", 0.0, 0.0),
         ("large_magnitude", 1e8, -1e8),
@@ -256,7 +251,7 @@ class TestP2NoNanInf:
         for i in range(n_ticks):
             # Interleave adversarial and random
             if i % 100 < len(self.ADVERSARIAL_INPUTS):
-                desc, x_a, x_b = self.ADVERSARIAL_INPUTS[i % len(self.ADVERSARIAL_INPUTS)]
+                _, x_a, x_b = self.ADVERSARIAL_INPUTS[i % len(self.ADVERSARIAL_INPUTS)]
             else:
                 x_a = float(rng.normal(0, 1))
                 x_b = float(rng.normal(0, 1))
@@ -299,7 +294,7 @@ class TestP2NoNanInf:
         state = _fresh_state(config)
         rng = np.random.default_rng(42)
 
-        for i in range(500):
+        for _ in range(500):
             tick = TickMetrics(
                 X=(
                     np.array([0.0], dtype=np.float64),  # constant axis
@@ -422,7 +417,6 @@ class TestR1FullLifecycle:
           - Extreme spike: any_axis_flag and joint_flag trigger
           - Recovery: flags drop back to baseline
         """
-        A = 2
         alpha = 0.01
         config = _make_config(
             axis_names=("a", "b"),
@@ -488,12 +482,10 @@ class TestR1FullLifecycle:
 
         # Drift: elevated joint flags
         drift_joint = sum(1 for r in results[d_start:d_end] if r.joint_flag)
-        drift_any = sum(1 for r in results[d_start:d_end] if r.any_axis_flag)
         assert drift_joint >= 1, f"Expected joint_flag during drift, got {drift_joint}"
 
         # Spike: should force flags
         spike_joint = sum(1 for r in results[sp_start:sp_end] if r.joint_flag)
-        spike_any = sum(1 for r in results[sp_start:sp_end] if r.any_axis_flag)
         assert spike_joint >= 2, f"Expected joint flags during spike, got {spike_joint}"
 
         # Recovery: flags subside

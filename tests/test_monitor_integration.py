@@ -14,12 +14,17 @@ import numpy as np
 import pytest
 
 from agent_monitor.advance import advance
-from agent_monitor.checkpoint import load_checkpoint
 from agent_monitor.config import validate_monitor_config
 from agent_monitor.monitor import Monitor
 from agent_monitor.population import absorb as pure_absorb
 from agent_monitor.population import score_sessions
-from agent_monitor.types import MonitorConfig, MonitorState, SessionFeatures, SessionWindow, TickMetrics
+from agent_monitor.types import (
+    MonitorConfig,
+    MonitorState,
+    SessionFeatures,
+    SessionWindow,
+    TickMetrics,
+)
 
 
 def _make_config(**overrides: object) -> MonitorConfig:
@@ -49,7 +54,7 @@ class TestAirflowWorkflow:
         for day in range(3):
             # --- Start of day: restore from checkpoint ---
             if day > 0:
-                monitor = Monitor.restore(cp)
+                monitor = Monitor.restore(tmp_path / f"checkpoint_day{day - 1}")
 
             tick_metrics = [
                 TickMetrics(
@@ -88,7 +93,7 @@ class TestAirflowWorkflow:
                 for s in ("top_k", "flagged", "per_axis", "uniform"):
                     all_sel.update(plan.strata[s])
                 assert plan.strata["reserved"] == ()
-                assert all_sel | set(plan.unallocated) == set(s.id for s in scores)
+                assert all_sel | set(plan.unallocated) == {s.id for s in scores}
 
             # --- End of day: save checkpoint ---
             cp = tmp_path / f"checkpoint_day{day}"
@@ -98,7 +103,9 @@ class TestAirflowWorkflow:
             restored = Monitor.restore(cp)
             assert restored.tick == monitor.tick
             np.testing.assert_array_equal(restored.state.mu, monitor.state.mu)
-            np.testing.assert_array_equal(restored.state.population.ids, monitor.state.population.ids)
+            np.testing.assert_array_equal(
+                restored.state.population.ids, monitor.state.population.ids
+            )
 
     def test_monitor_vs_pure_equivalence_over_workflow(self) -> None:
         """Monitor facade produces identical results to pure function calls."""

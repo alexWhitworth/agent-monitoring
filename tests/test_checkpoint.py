@@ -1,12 +1,9 @@
-# ruff: noqa: N806
 """Unit tests for checkpoint.py — save/load round-trip, format version gate,
 atomic write, shape validation, and edge cases (F-010).
 """
 
 from __future__ import annotations
 
-import shutil
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -16,23 +13,19 @@ import pytest
 
 from agent_monitor.checkpoint import (
     FORMAT_VERSION,
-    load_checkpoint,
-    save_checkpoint,
     _ndarray_from_bytes,
     _ndarray_to_bytes,
+    load_checkpoint,
+    save_checkpoint,
 )
 from agent_monitor.config import config_to_json, validate_monitor_config
 from agent_monitor.population import absorb
 from agent_monitor.types import (
-    AxisResult,
-    JointResult,
     MonitorConfig,
     MonitorState,
     SessionFeatures,
     SessionWindow,
-    TickResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,7 +74,11 @@ def _make_state(
 
     metric_buf = np.random.default_rng(1).normal(0, 1, size=(A, M_max, w)).astype(np.float64)
     metric_count = np.full((A, M_max), w, dtype=np.int64)
-    theta = np.random.default_rng(2).normal(0, 0.5, size=(A,)).astype(np.float64) if with_theta else None
+    theta = (
+        np.random.default_rng(2).normal(0, 0.5, size=(A,)).astype(np.float64)
+        if with_theta
+        else None
+    )
     axis_buf = np.random.default_rng(3).normal(0, 1, size=(A, w)).astype(np.float64)
     axis_count = np.full((A,), w, dtype=np.int64)
     mu = np.random.default_rng(4).normal(0, 0.5, size=(A,)).astype(np.float64)
@@ -193,7 +190,9 @@ class TestSaveLoadRoundTrip:
         np.testing.assert_array_equal(restored.population.ids, state.population.ids)
         np.testing.assert_array_equal(restored.population.ticks, state.population.ticks)
         np.testing.assert_array_equal(restored.population.features, state.population.features)
-        np.testing.assert_array_equal(restored.population.tick_flagged, state.population.tick_flagged)
+        np.testing.assert_array_equal(
+            restored.population.tick_flagged, state.population.tick_flagged
+        )
         np.testing.assert_array_equal(restored.population.absorbed_at, state.population.absorbed_at)
 
     def test_round_trip_theta_none(self, tmp_path: Path) -> None:
@@ -338,7 +337,7 @@ class TestShapeValidation:
         checkpoint_dir = tmp_path / "checkpoint"
         save_checkpoint(state, checkpoint_dir)
         (checkpoint_dir / "state.parquet").unlink()
-        with pytest.raises(FileNotFoundError, match="state.parquet"):
+        with pytest.raises(FileNotFoundError, match=r"state\.parquet"):
             load_checkpoint(checkpoint_dir)
 
     def test_missing_population_parquet_raises(self, tmp_path: Path) -> None:
@@ -346,7 +345,7 @@ class TestShapeValidation:
         checkpoint_dir = tmp_path / "checkpoint"
         save_checkpoint(state, checkpoint_dir)
         (checkpoint_dir / "population.parquet").unlink()
-        with pytest.raises(FileNotFoundError, match="population.parquet"):
+        with pytest.raises(FileNotFoundError, match=r"population\.parquet"):
             load_checkpoint(checkpoint_dir)
 
 

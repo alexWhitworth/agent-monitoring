@@ -6,13 +6,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from agent_monitor.advance import advance
-from agent_monitor.checkpoint import load_checkpoint, save_checkpoint
 from agent_monitor.config import validate_monitor_config
 from agent_monitor.monitor import Monitor
-from agent_monitor.population import absorb as pure_absorb
 from agent_monitor.types import (
     MonitorConfig,
     MonitorState,
@@ -21,7 +18,6 @@ from agent_monitor.types import (
     SessionScore,
     TickMetrics,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -89,7 +85,7 @@ class TestDelegation:
         )
 
         rng = np.random.default_rng(42)
-        for i in range(100):
+        for _ in range(100):
             tick = TickMetrics(
                 X=(
                     rng.normal(0, 0.5, size=(1,)).astype(np.float64),
@@ -212,7 +208,7 @@ class TestTickFlagged:
         assert bool(monitor.state.population.tick_flagged[0]) is False
 
     def test_tick_flagged_persists_across_multiple_absorbs(self) -> None:
-        """tick_flagged is set from the most recent update(), used for all absorbs until next update."""
+        """tick_flagged persists across absorbs until the next update()."""
         config = _make_config()
         monitor = Monitor(config)
 
@@ -226,9 +222,11 @@ class TestTickFlagged:
 
         # Two absorbs
         monitor.absorb(SessionFeatures(ids=("a",), tick=monitor.tick - 1, F=np.array([[5.0, 0.0]])))
-        monitor.absorb(SessionFeatures(ids=("b",), tick=monitor.tick - 1, F=np.array([[10.0, 0.0]])))
+        sf_b = SessionFeatures(ids=("b",), tick=monitor.tick - 1, F=np.array([[10.0, 0.0]]))
+        monitor.absorb(sf_b)
         # Both should have the same tick_flagged from the spike
-        assert monitor.state.population.tick_flagged[-2] == monitor.state.population.tick_flagged[-1]
+        tick_flagged = monitor.state.population.tick_flagged
+        assert tick_flagged[-2] == tick_flagged[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +330,7 @@ class TestEdgeCases:
                     np.array([float((i + 1) % 5)], dtype=np.float64),
                 )
             )
-            tr = monitor.update(tick)
+            monitor.update(tick)
             sessions = SessionFeatures(
                 ids=(f"sess_{i}",),
                 tick=monitor.tick - 1,
