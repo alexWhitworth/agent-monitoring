@@ -5,6 +5,7 @@ mutants/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.hypothesis/
 *.egg-info/
 __pycache__/
 .python-version
