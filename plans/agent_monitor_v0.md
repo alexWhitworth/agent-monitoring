@@ -398,8 +398,15 @@ def advance(state: MonitorState, tick: TickMetrics) -> tuple[MonitorState, TickR
   DOI 10.14778/3538598.3538602. `depends_on: [1a, 2d, 3a]`
 - **5d. Release hygiene**: lean README (minimal quick-start, paper-default
   parameter table, deferred-scope notes, links) with detailed runnable
-  streaming + Airflow examples in `examples/*.py` (synthetic data, public
-  API only), coverage ≥ 85%, ruff/mypy clean, uv lockfile.
+  streaming + Airflow examples in `examples/*.py` (synthetic data generated
+  by the DGP catalog, driving the public `agent_monitor.Monitor` API).
+  README includes an honest *Validity* section — the DGPs partially
+  demonstrate the method (canonical anomaly-type behavior, H₀ calibration,
+  winsor robustness) with the limits bounded (synthetic, semantics-conformance
+  not ground truth, per-axis layer calibrated at k < √w) — and a *References*
+  section with BibTeX for the AMDM paper (arXiv:2509.00115) and Schmidl,
+  Wenig & Papenbrock (VLDB 15(9), 2022, DOI 10.14778/3538598.3538602).
+  Coverage ≥ 85%, ruff/mypy clean, uv lockfile.
   `depends_on: [5a, 5b, 5c, 4b]`
 
 ## 6. System & Test Invariants
