@@ -27,6 +27,9 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+agent_monitor = ["py.typed"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
