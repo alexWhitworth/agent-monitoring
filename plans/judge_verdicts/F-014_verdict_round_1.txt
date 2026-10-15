@@ -1,0 +1,132 @@
+================================================================================
+JUDGE VERDICT: F-014 — Anomaly-type DGP catalog
+================================================================================
+Verdict: CONDITIONAL_PASS
+Date:    2026-10-15
+Round:   1
+Judge:   agent-judge
+
+================================================================================
+SCORECARDS
+================================================================================
+Acceptance Criteria:
+  [MET] tests/dgps.py exports six seeded pure DGP generators (DGP-01..06) with
+        declared expected-flag semantics mapped to the taxonomy
+        (six functions + DGP_GENERATORS registry + TAXONOMY map; every stream
+        carries a `declared` string and anomaly window)
+  [MET] [G2] DGP-02 (point, x20 sigma, 1 tick) & DGP-05 (subsequence, +3 sigma,
+        3 ticks): any_axis_flag AND joint_flag at onset, silent recovery
+  [MET] [G2] DGP-03 (coordinated +1.5 sigma): joint_flag and NOT any_axis_flag
+        over the shift window; each marginal within k
+  [MET] [G2] DGP-06 (0.5% contamination): winsor caps stable vs clean baseline,
+        [P4] ordering preserved, shifted candidate not masked
+  [MET] [G3] DGP-04 (ramp +0.05 sigma/tick): EWMA absorption asserted (R-04),
+        no flag assertion
+  [MET] [G1] identical (dgp_id, seed, length) -> byte-identical; differing
+        seeds differ
+  [MET] DGP-01 over >= 10 seeds realizes [P1]/[P3] bands (Tier 1 & Tier 2)
+  [MET] ruff check . clean; mypy --strict clean on tests/dgps.py (also clean on
+        tests/test_dgps.py and src/); seasonal/contextual DGP documented as a
+        v1 realism gate (module docstring), not a v0 pass/fail
+
+Test Suite:      286 passed, 0 failed; coverage 100% (gate: 85%)
+                 (23 new tests in tests/test_dgps.py: 17 unit/parametrized + 6
+                  hypothesis-driven determinism cases)
+Type Check:      mypy --strict clean — src/ (12 files), tests/dgps.py,
+                 tests/test_dgps.py
+Lint:            ruff check . clean; the two new files are ruff-format clean
+Mutation Score:  N/A — mutation_testing.enabled = false, correct: no production
+                 logic changed (only tests/ + an empty py.typed marker +
+                 package-data)
+Rust/FFI:        N/A (no Rust in v0)
+
+================================================================================
+INDEPENDENT VERIFICATION PERFORMED
+================================================================================
+None of the following used the Actor's test assertions; each was executed from
+scratch by the Judge:
+
+1.  Build: `uv pip install -e .` — success.
+2.  Full suite: 286 passed, 100% coverage (85% fail_under gate active).
+3.  [G2] semantics via a direct pipeline run (fresh MonitorState, advance only):
+    - DGP-02 (seed=1): onset any_axis_flag=True, joint_flag=True; 6 ticks after
+      onset all silent.
+    - DGP-03 (seed=1): window ticks 250-252 -> any_axis_flag=[F,F,F],
+      joint_flag=[T,T,T]; recovery silent.
+    - DGP-05 (seed=1): onset any_axis_flag=True, joint_flag=True; joint=[T,T,T]
+      over the burst; recovery silent.
+4.  Seed-sensitivity probe (n=40 seeds each, actual catalog functions):
+    - DGP-02 point: both-layers-at-onset 40/40.
+    - DGP-03 coordinated: any-flag/missing-joint violations 0/40.
+    - DGP-05 subsequence: both-layers-at-onset 40/40.
+    (The catalog is thus MORE seed-robust than the per-axis layer's tight
+     margin might suggest; the chosen SEMANTICS_SEED is not a lucky seed.)
+5.  DGP-06 (independent numbers): caps clean [2.320, 2.247] vs contaminated
+    [2.508, 2.247] on the upper row — max |diff| = 0.188 (the test's atol=0.5
+    is non-trivial: a 5% contamination would move q_0.99 to ~25).  [P4]:
+    d2(beyond cap)=54.02 > d2(at cap)=5.88.  No masking: d2(shifted candidate,
+    contaminated pop)=34.40 vs clean pop=35.77, both >> chi2_2(0.99)=9.21.
+6.  DGP-04 (independent numbers): theta 0.068 -> 2.007 (+1.94 absorbed),
+    consistent with the documented ~+2 ramp-score offset.
+7.  DGP-01 (independent numbers): Tier 1 flag rate 0.00833 in [0.005, 0.02],
+    mean D2 2.010 (~A=2) over 10 440 post-warm ticks; Tier 2 flag rate 0.01093
+    in [0.01, 0.02], mean d2 2.054 over 10 800 candidates (12 seeds).
+8.  [G1] determinism: hypothesis @given over all six DGP ids (short streams) +
+    fixed full-lifecycle (BASELINE_TICKS+10) byte-identical and seed-sensitivity
+    checks.  `_same_stream` compares float64 arrays via np.array_equal (bitwise)
+    and session ids/tick/features — a faithful byte-level comparator.
+
+================================================================================
+FINDINGS
+================================================================================
+ADVISORY (A1) — "H0 flag-rate bounds across seeds (DGP-01)" is a fixed sweep,
+               not a hypothesis strategy
+  File: tests/test_dgps.py, test_p1_p3_dgp01_h0_flag_bands
+  The spec's property_based_testing.strategies lists this property beside the
+  determinism strategy (which IS hypothesis-backed via @given).  The Actor
+  implemented the H0 bands as a deterministic 12-seed Monte-Carlo (fixed seeds
+  0..11).  Every binding requirement is nonetheless MET: the acceptance
+  criterion ("over >= 10 seeds") and test_requirements ("unit + hypothesis",
+  satisfied by the determinism test).  The fixed-sweep choice is statistically
+  sound — a pooled 10^4-sample flag-rate band cannot be asserted per-seed,
+  and a @given wrapper would simply re-run the same 10^4-tick pool — but that
+  rationale is not recorded in the test.
+  Recommended mechanical fix: add one docstring line to
+  test_p1_p3_dgp01_h0_flag_bands stating it realizes the "across seeds"
+  strategy as a pooled Monte-Carlo (hypothesis reserved for the many-example
+  determinism property).
+
+ADVISORY (A2) — repo-wide `ruff format --check .` is not clean (informational,
+               out of F-014 scope)
+  `ruff format --check .` reports 23 files "would be reformatted"; all are
+  pre-existing (src/ and earlier tests) and predate F-014.  The F-014 AC
+  requires only `ruff check .` (lint), which passes, and both new files are
+  individually format-clean.  Deferred to F-015 only if repo-wide formatting
+  is desired.
+
+INFORMATIONAL (A3) — catalog calibration deviates from paper defaults, by
+                    design and documented
+  topology A=2, M=25, w=250, k=7.0 (vs paper A=5, M=10, w=80, k=chi2_A(0.99)).
+  The module docstring derives why k<sqrt(w) is required for the per-axis layer
+  to fire at all, and the F-015 spec entry now mandates a README "Validity"
+  section that bounds exactly this claim.  No action for F-014.
+
+INFORMATIONAL (A4) — py.typed + package-data added by a test-only feature
+  Required enabler for the "mypy --strict clean on tests/dgps.py" AC (the
+  typed surface must be visible to the checker).  Net positive: the library is
+  now a proper PEP 561 typed package.  No action.
+
+No BLOCKING findings. No ESCALATIONS. The per-axis "any_axis_flag" claims, the
+joint-only coordinated behavior, winsor stability/[P4]/no-masking, ramp
+absorption, and both H0 flag-rate bands were all independently reproduced.
+
+================================================================================
+REQUIRED ACTIONS (for the Actor, optional on CONDITIONAL_PASS)
+================================================================================
+  A1: one-line docstring addition to test_p1_p3_dgp01_h0_flag_bands.
+  A2: defer repo-wide ruff formatting to F-015 (or ignore; out of scope).
+</think>
+
+<｜DSML｜tool_calls>
+<｜DSML｜invoke name="edit">
+<｜DSML｜parameter name="path" string="true">/home/alexwhitworth/github_projects/agent_monitor/plans/v0_spec.json
