@@ -997,7 +997,7 @@
         "uv.lock committed; .coverage, coverage.xml, htmlcov/, .pytest_cache/ in .gitignore"
       ],
       "test_requirements": ["CI/dev commands: uv run pytest, uv run ruff check ., uv run mypy src/", "example smoke check: uv run python examples/<name>.py exits 0 for every example script (examples excluded from coverage source = src/agent_monitor)"],
-      "edge_cases": ["coverage gate vs. I/O-bound checkpoint module (use # pragma: no cover on untestable env branches only)", "examples excluded from coverage accounting (source = src/agent_monitor); ruff still lints them", "example drift vs. public API (examples drive the method via the agent_monitor public surface only; synthetic streams come from the DGP catalog, which must be importable from examples without becoming part of agent_monitor's public API)"],
+      "edge_cases": ["coverage gate vs. I/O-bound checkpoint module (use # pragma: no cover on untestable env branches only)", "examples excluded from coverage accounting (source = src/agent_monitor); ruff still lints them", "example drift vs. public API (examples drive the method via the agent_monitor public surface only; synthetic streams come from the DGP catalog, which must be importable from examples without becoming part of agent_monitor's public API)", "repo-wide ruff format (23 pre-existing files unformatted, deferred from F-014): decide whether to enforce ruff format --check . in CI or keep lint-only (ruff check .)"],
       "clarification_needed": false
     }
   ],

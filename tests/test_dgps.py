@@ -306,7 +306,14 @@ def test_g3_dgp04_ewma_absorbs_ramp() -> None:
 
 
 def test_p1_p3_dgp01_h0_flag_bands() -> None:
-    """[P1]/[P3] DGP-01 realizes H0 flag-rate bands over 12 seeds (>= 10^4)."""
+    """[P1]/[P3] DGP-01 realizes H0 flag-rate bands over 12 seeds (>= 10^4).
+
+    This realizes the spec's "H0 flag-rate bounds across seeds" strategy as a
+    pooled Monte-Carlo rather than a ``@given`` hypothesis test: a 10^4-sample
+    flag-rate band must be pooled across seeds (a single seed's ~10^3 ticks is
+    too noisy to bound), so hypothesis is reserved for the many-example
+    determinism property above.
+    """
     seeds = list(range(12))
     ticks_per_seed = 900  # 12 * 900 = 10 800 ticks and sessions (>= 10^4 post-warm-up)
 
