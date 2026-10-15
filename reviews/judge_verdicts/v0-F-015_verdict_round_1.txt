@@ -1,0 +1,117 @@
+================================================================================
+JUDGE VERDICT: F-015 — Release hygiene
+================================================================================
+Verdict: PASS
+Date:    2026-10-15
+Round:   1
+Judge:   agent-judge
+
+================================================================================
+SCORECARDS
+================================================================================
+Acceptance Criteria:
+  [MET] uv run pytest exits 0 with total coverage >= 85% (fail_under gate
+        active) — 286 passed, 100.00% coverage, fail_under = 85 in pyproject
+  [MET] uv run ruff check . AND uv run mypy src/ both exit 0 — both clean
+        (ruff includes examples/; mypy covers 12 source files)
+  [MET] README has: minimal quick-start (install + minimal usage), brief
+        Airflow-style workflow outline (F-011 AC), paper-default parameter
+        tables (MonitorConfig + QueueConfig), deferred-scope notes, links into
+        examples/; NO detailed examples inline (quick-start is a single
+        update() call; the DGP loops/queue/Tier-2 logic live only in examples/)
+  [MET] examples/ holds runnable streaming_service.py + airflow_batch.py; each
+        exits 0 via `uv run python examples/<name>.py` on DGP-catalog synthetic
+        data (tests/dgps.py) driving the public agent_monitor.Monitor API
+  [MET] README "Validity" section honestly bounds the claim (synthetic
+        semantics-conformance oracle, not ground truth; per-axis demonstrations
+        conditioned on catalog k=7.0 < sqrt(250) vs paper default k >= 9.21 >
+        sqrt(80); references/AMDM.py named the independent numerical oracle)
+  [MET] README "References" section: BibTeX for Shukla (arXiv:2509.00115) and
+        Schmidl, Wenig & Papenbrock (VLDB 15(9), DOI 10.14778/3538598.3538602)
+  [MET] uv.lock committed (git-tracked); .coverage, coverage.xml, htmlcov/,
+        .pytest_cache/ in .gitignore (+ .hypothesis/ added as a transient
+        artifact)
+
+Invariants (plausibility_range):
+  [MET] README documents all 10 plan assumptions (verbatim coverage of plan
+        §7 items 1-10) and the deferred-scope items (calibration v1, partial
+        axes v1+, seasonal/contextual DGP v1, plotnine v2, Rust "if profiling
+        justifies") with no inline detailed examples
+
+Test Suite:      286 passed, 0 failed; coverage 100.00% (gate: 85%)
+Type Check:      mypy --strict clean — src/ (12 files)
+Lint:            ruff check . clean (including examples/); the 3 new files
+                 (README.md + 2 examples) are individually ruff-format clean
+Mutation Score:  N/A — mutation_testing.enabled = false, correct: no
+                 production code in scope (documentation/CI hygiene only)
+Rust/FFI:        N/A (no Rust in v0)
+
+================================================================================
+INDEPENDENT VERIFICATION PERFORMED
+================================================================================
+None of the following relied on the Actor's claims; each was executed from
+scratch by the Judge:
+
+1.  Build: `uv pip install -e .` — success (README.md now present and picked up
+    by `readme = "README.md"`).
+2.  Full suite: 286 passed, 100.00% coverage, 85% fail_under gate active.
+3.  `uv run ruff check .` — clean; `uv run mypy src/` — clean.
+4.  Example smoke runs, fresh process each:
+      examples/streaming_service.py -> exit 0
+      examples/airflow_batch.py     -> exit 0
+    airflow_batch output confirms the full restore->advance->absorb->score->
+    save path: "processed 80 ticks -> tick 80", "scored 20/20 candidates",
+    "restored checkpoint -> tick 80 (round-trips)".
+5.  README quick-start snippet executed verbatim: prints
+    "alert = False | k = 15.08627246938899 | A = 5" — k resolves to
+    chi2.ppf(0.99, df=5), consistent with F-001's plausibility range
+    (k in [15.086, 15.087] for A=5).
+6.  Parameter-table audit against DS-001/DS-002: all MonitorConfig defaults
+    (w=80, lam=0.25, k=None->chi2_A(0.99), alpha=0.01, min_warm=30, ridge=1e-6,
+    agg=mean, population_window=80, min_population=30, winsor_pct=0.99,
+    winsor_k=3) and QueueConfig defaults (200/150/100/100/50, seed=0) match the
+    schema exactly.
+7.  Assumption count: exactly 10 numbered assumptions; deferred-scope list
+    includes calibration v1, partial axes v1+, plotnine v2.
+8.  DGP access path verified: examples insert the repo root via sys.path and
+    `from tests import dgps` (namespace package); ruff E402 does not fire
+    because it exempts imports following sys.path modifications — confirmed the
+    noqa was correctly dropped.
+9.  git hygiene: `git ls-files uv.lock` -> uv.lock tracked; .gitignore contains
+    .coverage, coverage.xml, htmlcov/, .pytest_cache/ (+ .hypothesis/).
+
+================================================================================
+FINDINGS
+================================================================================
+ADVISORY (A1) — the "ruff format vs lint-only" decision is implicit, not
+                recorded
+  File: README.md, "Development"; .github/workflows/ci.yml
+  F-015's edge_cases list explicitly asks to "decide whether to enforce
+  ruff format --check . in CI or keep lint-only (ruff check .)".  The Actor
+  retained lint-only (CI unchanged; README Development section lists only
+  `ruff check .`), which is the correct call — `ruff format --check .` still
+  reports 23 pre-existing files would be reformatted, while the 3 new files are
+  format-clean.  The decision itself, however, is not written down anywhere.
+  Recommended mechanical fix (optional): add one sentence to README's
+  Development section noting `ruff check .` is the enforced gate and repo-wide
+  `ruff format` is intentionally deferred to a future cleanup (23 pre-existing
+  files).
+
+ADVISORY (A2) — examples use bare `assert` for warm-up completeness guards
+  File: examples/streaming_service.py:43,45; examples/airflow_batch.py:37,42
+  `assert final_result is not None` / `assert final_sessions is not None` are
+  correct (the DGP streams always emit >= 1 session per tick and the loop runs
+  length >= 80 times), and they survive `python -O` without NameError because
+  the names are still assigned.  Purely a style note for example code; no
+  correctness impact.
+
+No BLOCKING findings. No ESCALATIONS. Every acceptance criterion and the
+plausibility invariant is MET and independently reproduced.
+
+================================================================================
+REQUIRED ACTIONS (for the Actor, optional on PASS)
+================================================================================
+  A1: (optional) one-sentence Development-section note documenting the
+      lint-only (no `ruff format` enforcement) decision.
+  A2: (optional) replace assert-based warm-up guards with explicit
+      `if final_result is None: raise ...` if examples ever ship beyond demos.
