@@ -928,7 +928,7 @@
       "description": "tests/dgps.py: catalog of six seeded, pure data-generating processes (DGP-01..DGP-06) mapped to the Schmidl et al. (2022) anomaly taxonomy (VLDB 15(9), DOI 10.14778/3538598.3538602): H0 iid, point, multivariate-coordinated, ramp (characterization only), subsequence burst, Tier-2 population contamination. Each DGP emits full-lifecycle TickMetrics/SessionFeatures streams (A >= 2 axes) with declared expected-flag semantics. Additive test infrastructure: completed soak/parity tests are NOT reopened; the catalog feeds new per-type semantics tests.",
       "phase": "5c",
       "priority": 14,
-      "status": "planned",
+      "status": "pending_judge",
       "layer": "python",
       "dependencies": ["F-001", "F-006", "F-007"],
       "linked_schemas": ["DS-001", "DS-004", "DS-005"],
