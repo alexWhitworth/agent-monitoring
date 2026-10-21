@@ -12,6 +12,7 @@ from pathlib import Path
 
 from agent_monitor.advance import advance
 from agent_monitor.checkpoint import load_checkpoint, save_checkpoint
+from agent_monitor.config import validate_monitor_config
 from agent_monitor.population import absorb as _absorb
 from agent_monitor.population import score_sessions
 from agent_monitor.queue import build_review_queue
@@ -36,11 +37,16 @@ class Monitor:
     """
 
     def __init__(self, config: MonitorConfig) -> None:
-        """Initialize a fresh monitor from a validated config.
+        """Initialize a fresh monitor, validating and resolving the config.
 
         Args:
-            config: Validated MonitorConfig (from validate_monitor_config).
+            config: MonitorConfig; validated here (k=None is resolved to
+                chi2.ppf(0.99, df=A) if not already set).
+
+        Raises:
+            ValueError: If config fails validate_monitor_config's invariants.
         """
+        config = validate_monitor_config(config)
         A = len(config.axis_names)
         M_max = max(len(m) for m in config.metric_names)
         w = config.window
@@ -95,7 +101,17 @@ class Monitor:
 
         Args:
             sessions: Candidate sessions for the current tick.
+
+        Raises:
+            ValueError: If sessions.tick is ahead of this monitor's current
+                tick (sessions must belong to the current tick or an earlier
+                one — a later tick hasn't been update()'d yet).
         """
+        if sessions.tick > self._state.tick:
+            raise ValueError(
+                f"SessionFeatures.tick ({sessions.tick}) is ahead of the monitor's "
+                f"current tick ({self._state.tick}); call update() for that tick first"
+            )
         self._state = _absorb(self._state, sessions, tick_flagged=self._last_alert)
 
     def score(self, sessions: SessionFeatures) -> tuple[SessionScore, ...]:

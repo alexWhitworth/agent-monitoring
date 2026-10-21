@@ -123,7 +123,7 @@ def absorb(
 def winsor_caps(state: MonitorState) -> np.ndarray | None:
     """Per-axis two-sided clip bounds [q_{1-p}, q_p] over full retention window.
 
-    None while winsor_pct is None or retained rows < 100.
+    None while winsor_pct is None or retained rows < min_population.
     Returns (2, A) array: caps[0] = lower, caps[1] = upper.
     """
     cfg = state.config
@@ -131,7 +131,7 @@ def winsor_caps(state: MonitorState) -> np.ndarray | None:
         return None
 
     pop = state.population
-    if len(pop.ids) < 100:
+    if len(pop.ids) < cfg.min_population:
         return None
 
     p = cfg.winsor_pct
