@@ -36,15 +36,18 @@ jobs:
             --markdown-report=diff-cover.md
           cat diff-cover.md >> "$GITHUB_STEP_SUMMARY"
       - name: Coverage of changed files
-        # 2. File-level coverage of every .py file touched by this PR/branch
-        #    (added, modified, or renamed; deleted files excluded).
+        # 2. File-level coverage of every src/agent_monitor .py file touched by
+        #    this PR/branch (added, modified, or renamed; deleted files
+        #    excluded). Scoped to the measured source tree -- tests/* is
+        #    omitted from [tool.coverage.run], so including a test-only diff
+        #    would match zero files and coverage report would hard-fail.
         run: |
           CHANGED_FILES=$(git diff --name-only --diff-filter=d origin/main...HEAD \
-            | { grep '\.py$' || true; } | paste -sd, -)
+            | { grep '^src/agent_monitor/.*\.py$' || true; } | paste -sd, -)
           if [ -n "$CHANGED_FILES" ]; then
             uv run coverage report --include="$CHANGED_FILES" --fail-under=0
           else
-            echo "No changed Python files."
+            echo "No changed files within the measured source tree."
           fi
       - name: Overall library coverage
         # 3. Coverage of the entire src/agent_monitor package.
