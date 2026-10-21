@@ -148,7 +148,7 @@ class TestWinsorCaps:
 
     def test_none_when_insufficient_rows(self) -> None:
         state = _make_fresh_state(winsor_pct=0.99)
-        assert winsor_caps(state) is None  # 0 < 100
+        assert winsor_caps(state) is None  # 0 < min_population
 
     def test_caps_computed_from_full_retention(self) -> None:
         state = _make_fresh_state(
@@ -448,12 +448,13 @@ class TestAbsorbHardening:
 
 
 class TestWinsorCapsHardening:
-    def test_boundary_exactly_100_rows(self) -> None:
-        """caps available at exactly 100 retained rows; None at 99."""
+    def test_boundary_matches_min_population(self) -> None:
+        """caps available once retained rows reach min_population; None just below it."""
 
         def make(n: int) -> MonitorState:
             state = _make_fresh_state(
-                population_window=500, window=5, winsor_k=1, tick=0, winsor_pct=0.9
+                population_window=500, window=5, winsor_k=1, tick=0, winsor_pct=0.9,
+                min_population=100,
             )
             F = np.column_stack(
                 [np.arange(1, n + 1, dtype=float), np.arange(n, 0, -1, dtype=float)]

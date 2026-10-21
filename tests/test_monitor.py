@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from agent_monitor.advance import advance
 from agent_monitor.config import validate_monitor_config
@@ -53,6 +54,22 @@ def _make_tick(a_val: float = 1.0, b_val: float = 0.0) -> TickMetrics:
 # ---------------------------------------------------------------------------
 # Delegation correctness
 # ---------------------------------------------------------------------------
+
+
+class TestConstruction:
+    def test_resolves_unresolved_k(self) -> None:
+        """Monitor(config) resolves k=None itself; callers need not pre-validate."""
+        config = MonitorConfig(
+            axis_names=("Safety", "Quality"), metric_names=(("m1",), ("m1",))
+        )
+        assert config.k is None
+        monitor = Monitor(config)
+        assert monitor.state.config.k is not None
+
+    def test_rejects_invalid_config(self) -> None:
+        config = MonitorConfig(axis_names=("only_one",), metric_names=(("m1",),))
+        with pytest.raises(ValueError, match="At least 2 axes"):
+            Monitor(config)
 
 
 class TestDelegation:
@@ -293,6 +310,15 @@ class TestEdgeCases:
         )
         monitor.absorb(sessions)
         assert bool(monitor.state.population.tick_flagged[0]) is False
+
+    def test_absorb_future_tick_raises(self) -> None:
+        config = _make_config()
+        monitor = Monitor(config)
+        sessions = SessionFeatures(
+            ids=("a",), tick=1, F=np.array([[1.0, 2.0]]),
+        )
+        with pytest.raises(ValueError, match="ahead of the monitor's current tick"):
+            monitor.absorb(sessions)
 
     def test_save_without_updates(self, tmp_path: Path) -> None:
         config = _make_config()
