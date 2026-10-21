@@ -182,11 +182,32 @@ def test_g2_dgp02_point_fires_both_layers_then_recovers() -> None:
     _, results = _run_tier1(stream)
     onset = stream.anomaly_start
 
+    # Warm-up ticks preceding onset: a loose sanity bound on gross over-flagging
+    # (the precise H0 rate is bounded at scale by test_p1_p3_dgp01_h0_flag_bands;
+    # a single alpha=0.01 FP in ~220 ticks is expected, not a bug).
+    pre_onset = results[stream.config.min_warm : onset]
+    assert sum(r.joint_flag for r in pre_onset) <= 0.05 * len(pre_onset)
     assert results[onset].any_axis_flag
     assert results[onset].joint_flag
     for t in range(onset + 1, onset + 6):
         assert not results[t].any_axis_flag
         assert not results[t].joint_flag
+
+
+def test_g2_dgp02_point_tp_rate_across_seeds() -> None:
+    """[G2] Point: onset TP rate (any_axis_flag and joint_flag), pooled over seeds.
+
+    ``SEMANTICS_SEED`` above pins one concrete realization; this pools 30 seeds
+    so the declared onset-firing claim is backed by a rate, not a single draw.
+    """
+    seeds = range(30)
+    hits = 0
+    for seed in seeds:
+        stream = dgps.dgp_02(seed, dgps.BASELINE_TICKS + 5)
+        _, results = _run_tier1(stream)
+        onset = stream.anomaly_start
+        hits += results[onset].any_axis_flag and results[onset].joint_flag
+    assert hits / len(seeds) >= 0.95  # a 20-sigma onset should fire almost always
 
 
 def test_g2_dgp03_coordinated_joint_only() -> None:
@@ -195,6 +216,10 @@ def test_g2_dgp03_coordinated_joint_only() -> None:
     _, results = _run_tier1(stream)
     s, e = stream.anomaly_start, stream.anomaly_end
 
+    # Warm-up ticks preceding the shift: loose sanity bound on gross over-flagging
+    # (precise H0 rate is bounded at scale by test_p1_p3_dgp01_h0_flag_bands).
+    pre_shift = results[stream.config.min_warm : s]
+    assert sum(r.joint_flag for r in pre_shift) <= 0.05 * len(pre_shift)
     for t in range(s, e):
         assert results[t].joint_flag
         assert not results[t].any_axis_flag
@@ -203,18 +228,60 @@ def test_g2_dgp03_coordinated_joint_only() -> None:
             assert ar.deviation <= ar.threshold + 1e-12
 
 
+def test_g2_dgp03_any_axis_fp_rate_across_seeds() -> None:
+    """[G2] Coordinated: any_axis_flag should almost never fire during the shift,
+    pooled over seeds.
+
+    The per-axis layer staying silent is a probabilistic claim -- ``M=25``
+    metrics/axis shrinks marginal noise to ``1/sqrt(25)=0.2`` SD but does not
+    eliminate it -- so a single seed cannot bound the false-positive rate.
+    """
+    n = 0
+    fp = 0
+    for seed in range(30):
+        stream = dgps.dgp_03(seed, dgps.BASELINE_TICKS + 5)
+        _, results = _run_tier1(stream)
+        for t in range(stream.anomaly_start, stream.anomaly_end):
+            n += 1
+            fp += results[t].any_axis_flag
+    assert fp / n <= 0.02
+
+
 def test_g2_dgp05_subsequence_fires_at_onset_then_recovers() -> None:
     """[G2] Subsequence (+3 sigma, 3 ticks): both layers at onset, then silent."""
     stream = dgps.dgp_05(SEMANTICS_SEED, dgps.BASELINE_TICKS + 40)
     _, results = _run_tier1(stream)
     s, e = stream.anomaly_start, stream.anomaly_end
 
+    # Warm-up ticks preceding the burst: loose sanity bound on gross over-flagging
+    # (precise H0 rate is bounded at scale by test_p1_p3_dgp01_h0_flag_bands).
+    pre_burst = results[stream.config.min_warm : s]
+    assert sum(r.joint_flag for r in pre_burst) <= 0.05 * len(pre_burst)
     assert results[s].any_axis_flag
     assert results[s].joint_flag
     assert all(results[t].joint_flag for t in range(s, e))
+    # The per-axis layer only ever fires at onset: theta's lam=0.25 EWMA chases
+    # the sustained +3-sigma shift fast enough that deviation drops back under
+    # k*sigma_S by the second burst tick (verified empirically across seeds, not
+    # an artifact of this one draw) -- so any_axis_flag is False for the rest of
+    # the window even though joint_flag keeps firing.
+    for t in range(s + 1, e):
+        assert not results[t].any_axis_flag
     for t in range(e, e + 6):
         assert not results[t].any_axis_flag
         assert not results[t].joint_flag
+
+
+def test_g2_dgp05_subsequence_tp_rate_across_seeds() -> None:
+    """[G2] Subsequence: onset TP rate (any_axis_flag and joint_flag), pooled."""
+    seeds = range(30)
+    hits = 0
+    for seed in seeds:
+        stream = dgps.dgp_05(seed, dgps.BASELINE_TICKS + 5)
+        _, results = _run_tier1(stream)
+        onset = stream.anomaly_start
+        hits += results[onset].any_axis_flag and results[onset].joint_flag
+    assert hits / len(seeds) >= 0.95
 
 
 def _score_candidate(state: MonitorState, f: list[float]) -> float | None:
@@ -255,6 +322,23 @@ def test_g2_dgp06_winsor_stability_p4_and_no_masking() -> None:
     threshold = float(chi2.ppf(1 - dgps.ALPHA, df=len(dgps.AXIS_NAMES)))
     assert d2_contam > threshold
     assert d2_contam >= 0.5 * d2_clean
+
+
+def test_g2_dgp06_high_contamination_breaks_cap_stability() -> None:
+    """Negative control for the winsor-stability claim.
+
+    Contamination above the tail mass the caps are designed to tolerate should
+    move the caps materially, proving the 0.5% stability result in
+    ``test_g2_dgp06_winsor_stability_p4_and_no_masking`` isn't vacuously
+    insensitive to contamination at any level (module docstring: "5% would sit
+    above q_0.99 and defeat the cap").
+    """
+    clean = dgps.dgp_06(0, contam_fraction=0.0, length=100, sessions_per_tick=20)
+    heavy = dgps.dgp_06(0, contam_fraction=0.05, length=100, sessions_per_tick=20)
+    caps_clean = winsor_caps(_absorb_all(clean))
+    caps_heavy = winsor_caps(_absorb_all(heavy))
+    assert caps_clean is not None and caps_heavy is not None
+    assert np.max(np.abs(caps_heavy - caps_clean)) > 2.0  # well past the 0.5 stability tolerance
 
 
 def test_g2_dgp06_contamination_fraction_accounted() -> None:
